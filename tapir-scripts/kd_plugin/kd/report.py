@@ -156,13 +156,47 @@ def send(title: str, error: str = "", comment: str = "", log: str | None = None)
     if error.strip():
         err = error.strip()
         text += "\n\nОшибка:\n" + (err if len(err) < 2500 else "…" + err[-2500:])
-    _api(token, "sendMessage", {"chat_id": chat, "text": text[:4000]})
     log = log or _state["log"] or log_path()
     blob = _tail(log)
-    if blob:
-        _api(token, "sendDocument", {"chat_id": chat, "caption": f"Журнал {os.path.basename(log)}"},
-             (os.path.basename(log), blob), timeout=60)
+    # одно сообщение «файл + подпись» — его удобно переслать боту целиком (см. inbox)
+    full = text.encode("utf-8") + b"\n\n" + ("=" * 60).encode() + b"\n" + blob
+    caption = text if len(text) <= 1000 else text[:990] + "\n…(полностью — в файле)"
+    _api(token, "sendDocument", {"chat_id": chat, "caption": caption},
+         (f"{_state['plugin']}_{time.strftime('%Y%m%d_%H%M%S')}.log", full), timeout=60)
     return "Отчёт отправлен разработчику."
+
+
+def inbox(out_dir: str) -> list[str]:
+    """Забирает отчёты, которые пользователь ПЕРЕСЛАЛ боту (свои сообщения бот не видит).
+
+    Telegram хранит такие сообщения ~24 ч — после разбора их подтверждаем (offset), чтобы не дублировать.
+    → список сохранённых папок.
+    """
+    token, chat = _settings()
+    res = _api(token, "getUpdates", {"timeout": 0})
+    saved, last = [], None
+    for u in res.get("result", []):
+        last = u["update_id"]
+        m = u.get("message") or {}
+        src = m.get("reply_to_message") if m.get("reply_to_message", {}).get("document") else m
+        doc = src.get("document")
+        text = src.get("caption") or src.get("text") or ""
+        if not doc and not (m.get("forward_origin") and text):
+            continue
+        d = os.path.join(out_dir, time.strftime("%Y%m%d_%H%M%S", time.localtime(src.get("forward_date") or m["date"]))
+                         + f"_{u['update_id']}")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "message.txt"), "w", encoding="utf-8") as f:
+            f.write(text + ("\n\nКомментарий при пересылке: " + m["text"] if src is not m and m.get("text") else ""))
+        if doc:
+            path = _api(token, "getFile", {"file_id": doc["file_id"]})["result"]["file_path"]
+            blob = urllib.request.urlopen(f"https://api.telegram.org/file/bot{token}/{path}", timeout=60).read()
+            with open(os.path.join(d, doc.get("file_name") or "log.txt"), "wb") as f:
+                f.write(blob)
+        saved.append(d)
+    if last is not None:
+        _api(token, "getUpdates", {"offset": last + 1, "timeout": 0})
+    return saved
 
 
 # ---------- окна ----------
@@ -271,9 +305,13 @@ def main(argv=None):
     ap.add_argument("--test", action="store_true", help="отправить тестовое сообщение")
     ap.add_argument("--dialog", action="store_true", help="окно «Отправить журнал»")
     ap.add_argument("--plugin", default="plugins", help="чей журнал отправлять")
+    ap.add_argument("--inbox", metavar="ПАПКА", help="забрать пересланные боту отчёты в папку")
     a = ap.parse_args(argv)
     _state["plugin"] = a.plugin
-    if a.test:
+    if a.inbox:
+        got = inbox(a.inbox)
+        print("\n".join(got) if got else "Новых пересланных отчётов нет.")
+    elif a.test:
         print(send("Проверка отправки отчётов", comment="тест"))
     else:
         logs = sorted((os.path.join(LOG_DIR, f) for f in os.listdir(LOG_DIR) if f.endswith(".log")),
