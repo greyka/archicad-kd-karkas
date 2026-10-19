@@ -39,7 +39,9 @@ from kd.config import USER_PATH, load_config       # noqa: E402
 
 TITLE = f"КД каркаса  v{__version__}"
 REPO = "greyka/archicad-kd-karkas"
-RAW_VERSION = f"https://raw.githubusercontent.com/{REPO}/main/tapir-scripts/kd_plugin/kd/__init__.py"
+VERSION_FILE = "tapir-scripts/kd_plugin/kd/__init__.py"
+API_VERSION = f"https://api.github.com/repos/{REPO}/contents/{VERSION_FILE}?ref=main"
+RAW_VERSION = f"https://raw.githubusercontent.com/{REPO}/main/{VERSION_FILE}"
 ZIP_URL = f"https://codeload.github.com/{REPO}/zip/refs/heads/main"
 # обновлять себя можно только в установленной раскладке (скрипт + kd_plugin рядом)
 INSTALLED = (os.path.normcase(KD_PLUGIN) == os.path.normcase(os.path.join(_here, "kd_plugin"))
@@ -59,13 +61,17 @@ def _vt(v):
 
 def remote_version():
     """Версия плагина в ветке main на GitHub (None — нет сети)."""
-    try:
-        req = urllib.request.Request(RAW_VERSION, headers={"Cache-Control": "no-cache"})
-        txt = urllib.request.urlopen(req, timeout=6).read().decode("utf-8")
-        m = re.search(r'__version__\s*=\s*"([^"]+)"', txt)
-        return m.group(1) if m else None
-    except Exception:
-        return None
+    # API отдаёт свежее сразу; raw.githubusercontent кэширует до 5 минут — запасной
+    for url, hdr in ((API_VERSION, {"Accept": "application/vnd.github.raw", "User-Agent": "kd-plugin"}),
+                     (RAW_VERSION, {"Cache-Control": "no-cache"})):
+        try:
+            txt = urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=6).read().decode("utf-8")
+            m = re.search(r'__version__\s*=\s*"([^"]+)"', txt)
+            if m:
+                return m.group(1)
+        except Exception:
+            continue
+    return None
 
 
 def self_update():
