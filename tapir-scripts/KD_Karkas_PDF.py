@@ -52,6 +52,7 @@ MODES = [
     ("layouts", "Листы в Archicad (книга макетов)"),
     ("publish", "Общий PDF из готовых листов Archicad (без перестройки)"),
     ("both",    "Пересоздать листы в Archicad + общий PDF"),
+    ("props",   "Марки и параметры в свойства досок (для интерактивного каталога)"),
 ]
 
 
@@ -219,11 +220,14 @@ def main():
             status.set("Ошибка.")
             messagebox.showerror(TITLE, error)
             return
-        status.set(f"Готово: {result}")
-        try:
-            os.startfile(result)
-        except OSError:
-            pass
+        if result and os.path.isfile(result):
+            status.set(f"Готово: {result}")
+            try:
+                os.startfile(result)
+            except OSError:
+                pass
+        else:                                   # режим без PDF (свойства)
+            status.set(f"Готово. {result or ''}  Обновите каталог в Archicad.")
 
     def work():
         argv = ["--archicad", "--name", name.get(), "-o", out.get()]
@@ -236,6 +240,8 @@ def main():
             argv.append("--layouts")
         if m in ("publish", "both"):
             argv.append("--publish")
+        if m == "props":
+            argv += ["--props", "--no-pdf"]
         try:
             res = kd_main(argv)
             root.after(0, done, res, None)
@@ -260,7 +266,8 @@ def main():
         status.set({"pdf": "Читаю модель и строю PDF…",
                     "layouts": "Строю листы в Archicad… (2–3 мин)",
                     "publish": "Публикую листы Archicad в PDF… (~1 мин)",
-                    "both": "Строю листы и публикую PDF… (3–4 мин)"}[m])
+                    "both": "Строю листы и публикую PDF… (3–4 мин)",
+                    "props": "Пишу марки и параметры в свойства досок…"}[m])
         threading.Thread(target=work, daemon=True).start()
 
     btn.configure(command=run)

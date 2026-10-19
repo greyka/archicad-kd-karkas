@@ -47,6 +47,9 @@ def main(argv=None):
                     help="нарисовать листы на макетах Archicad (подмножество КД)")
     ap.add_argument("--publish", action="store_true",
                     help="выпустить общий PDF набором публикации Archicad")
+    ap.add_argument("--no-pdf", action="store_true", help="не создавать PDF-файл")
+    ap.add_argument("--props", action="store_true",
+                    help="записать марки и параметры в свойства досок (для интерактивного каталога)")
     ap.add_argument("--write-marks", action="store_true",
                     help="записать марки в ID элементов Archicad")
     a = ap.parse_args(argv)
@@ -84,10 +87,20 @@ def main(argv=None):
         sys.exit("Нет деталей для чертежей.")
 
     groups = make_groups(parts, cfg.get("layer_prefixes"), cfg.get("layer_order"))
-    doc = build_document(groups, cfg)
-    doc.save(out, garbage=3, deflate=True)
-    print(f"Готово: {out}  листов: {doc.page_count}, марок: {len(groups)}, деталей: {len(parts)}")
+    if a.no_pdf:
+        out = None
+    else:
+        doc = build_document(groups, cfg)
+        doc.save(out, garbage=3, deflate=True)
+        print(f"Готово: {out}  листов: {doc.page_count}, марок: {len(groups)}, деталей: {len(parts)}")
 
+    if a.props:
+        from .ac_props import write_properties
+        r = write_properties(groups, cfg)
+        msg = f"Свойства «КД каркаса»: {r['elements']} досок, {r['marks']} марок"
+        print(msg)
+        if out is None:
+            out = msg
     if a.layouts:
         from .ac_layouts import publish_layouts
         r = publish_layouts(groups, cfg)
