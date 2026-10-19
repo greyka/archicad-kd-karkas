@@ -12,7 +12,8 @@
     "master_a4": "А4 - К - Ф3",
     "publisher_set": null,
     "publish_subsets": ["КД каркаса (авто)"],
-    "pen": 1
+    "pen": 1,
+    "schedule": { "id": "КД-СП", "row_height_mm": 6 }
   },
 
   "layer_prefixes": {

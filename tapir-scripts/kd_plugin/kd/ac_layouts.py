@@ -229,6 +229,84 @@ def ensure_subset(c: Client, name: str):
     return subset["navigatorItemId"], tree
 
 
+# ------------------------------------------------------------------ каталог на листах
+# Интерактивный каталог Archicad ставится на макет чертежом целиком (метр и
+# больше) — режем его на фрагменты клип-полигоном: по 2 колонки на A3, шапка
+# повторяется. Резать можно ровно по строкам, если все строки одной высоты
+# (в каталоге выключен «Перенос текста»): высота шапки = H − строк × h.
+
+SCH_TOP, SCH_LEFT, SCH_GAP, SCH_RIGHT = 0.287, 0.025, 0.010, 0.413   # м, лист A3
+SCH_BOTTOM = (0.010, 0.040)          # низ левой колонки и правой (над штампом)
+SCH_HEADER_MAX = 0.060
+
+
+def find_schedule(c: Client, key: str):
+    tree = c.tapir("GetNavigatorItemTree", {"navigatorMapId": "ProjectMap"})["navigatorItemTree"]
+    return next((it for it in _items(tree) if it.get("type") == "ScheduleItem"
+                 and key in (it.get("uiId"), it.get("name"))), None)
+
+
+def plan_fragments(n_rows: int, rh: float, hh: float, width: float):
+    """[(страница, x, строка_от, строка_до)], число страниц."""
+    cols = [(SCH_LEFT, SCH_BOTTOM[0])]
+    if SCH_LEFT + 2 * width + SCH_GAP <= SCH_RIGHT:
+        cols.append((SCH_LEFT + width + SCH_GAP, SCH_BOTTOM[1]))
+    frags, i, page = [], 0, 0
+    while i < n_rows:
+        for x, bottom in cols:
+            per = max(1, int((SCH_TOP - bottom - hh) / rh + 1e-6))
+            frags.append((page, x, i, min(n_rows, i + per)))
+            i = min(n_rows, i + per)
+            if i >= n_rows:
+                break
+        page += 1
+    return frags, max(page, 1)
+
+
+def measure_schedule(c: Client, sched_item, subset_id, master):
+    """Ширина и высота чертежа каталога (м) — на временном макете."""
+    d = {"layoutName": "_kd_measure", "parentNavigatorItemId": subset_id}
+    if master:
+        d["masterLayoutName"] = master
+    db = c.tapir("CreateLayout", {"layoutsData": [d]})["databases"][0]["databaseId"]
+    try:
+        r = c.tapir("CreateDrawings", {"drawingsData": [{
+            "navigatorItemId": sched_item["navigatorItemId"], "layoutDatabaseId": db,
+            "position": {"x": 0, "y": 0}, "scale": 1.0}]})
+        el = next(v for v in r.values() if isinstance(v, list))[0]["elementId"]
+        b = c.tapir("GetDetailsOfElements", {"elements": [{"elementId": el}]})["detailsOfElements"][0]["details"]["bounds"]
+        return b["xMax"] - b["xMin"], b["yMax"] - b["yMin"]
+    finally:
+        tree = layout_book(c)
+        tmp = [it for it in _items(tree) if it.get("type") == "LayoutItem" and it.get("name") == "_kd_measure"]
+        if tmp:
+            c.tapir("DeleteNavigatorItems", {"navigatorItemIds": [{"navigatorItemId": t["navigatorItemId"]} for t in tmp]})
+
+
+def place_fragments(c: Client, sched_item, frags, page_dbs, width, height, hh, rh):
+    def rect(y0, y1):
+        return [{"x": 0, "y": y0}, {"x": width, "y": y0}, {"x": width, "y": y1}, {"x": 0, "y": y1}]
+    data = []
+    for page, x, a, b in frags:
+        db = page_dbs[page]
+        y1 = height - hh - a * rh            # верх строки a (модель: 0 — низ таблицы)
+        y0 = height - hh - b * rh
+        y0 = max(0.0, y0)
+        common = {"navigatorItemId": sched_item["navigatorItemId"], "layoutDatabaseId": db, "scale": 1.0}
+        # position — левый НИЖНИЙ угол обрезанного фрагмента на листе
+        if a == 0:                            # первый фрагмент — вместе со своей шапкой
+            data.append({**common, "position": {"x": x, "y": SCH_TOP - (height - y0)},
+                         "clipPolygon": rect(y0, height)})
+        else:                                 # шапка + строки a..b под ней
+            data.append({**common, "position": {"x": x, "y": SCH_TOP - hh},
+                         "clipPolygon": rect(height - hh, height)})
+            data.append({**common, "position": {"x": x, "y": SCH_TOP - hh - (y1 - y0)},
+                         "clipPolygon": rect(y0, y1)})
+    if data:
+        c.tapir("CreateDrawings", {"drawingsData": data})
+    return len(data)
+
+
 # ------------------------------------------------------------------ выпуск
 
 def publish_layouts(groups: list[Group], cfg: dict, log=print) -> dict:
@@ -245,6 +323,30 @@ def publish_layouts(groups: list[Group], cfg: dict, log=print) -> dict:
     font = acfg.get("font_index") or master_font(c, tree, m_a3)
     log(f"Шрифт: индекс {font} (из мастер-макета)" if font else "Шрифт: по умолчанию инструмента «Текст»")
     log(f"Мастер A3: {m_a3}, A4: {m_a4}; подмножество «{subset_name}»")
+
+    # 0) интерактивный каталог (если его схема есть в проекте) — листы после СП-1
+    sched = None
+    scfg = acfg.get("schedule") or {}
+    skey = scfg.get("id", "КД-СП")
+    item = find_schedule(c, skey) if skey else None
+    if item:
+        from .ac_props import write_properties
+        write_properties(groups, cfg, log=log)          # каталог = текущие марки
+        rh = float(scfg.get("row_height_mm", 6)) / 1000
+        w, h = measure_schedule(c, item, subset_id, m_a3)
+        hh = h - len(groups) * rh
+        ok = 0.003 < hh < SCH_HEADER_MAX
+        if ok:
+            frags, npages = plan_fragments(len(groups), rh, hh, w)
+        else:
+            frags, npages = [], 1
+            log("  [!] каталог: строки разной высоты — выключите в нём «Перенос текста»; ставлю целиком")
+        name = item.get("name") or skey
+        sch_sheets = [Sheet(name + (f" (лист {p + 1})" if npages > 1 else ""), A3L, None) for p in range(npages)]
+        last_spec = max((i for i, sh in enumerate(sheets) if sh.title == "Общая спецификация"), default=-1)
+        sheets[last_spec + 1:last_spec + 1] = sch_sheets
+        sched = dict(item=item, w=w, h=h, hh=hh, rh=rh, frags=frags, ok=ok, sheets=sch_sheets)
+        log(f"Каталог «{name}»: {len(groups)} строк, {npages} лист(а)")
 
     # 1) все макеты разом — ведомость первой. Archicad вставляет новый
     #    макет в начало подмножества, поэтому создаём в обратном порядке.
@@ -277,11 +379,27 @@ def publish_layouts(groups: list[Group], cfg: dict, log=print) -> dict:
     # 3) рисуем каждый лист в его макете
     total = 0
     for i, (sh, db) in enumerate(zip(all_sheets, dbs), 1):
+        if sh.draw is None:                  # лист каталога — заполняется ниже
+            continue
         c.tapir("ChangeWindow", {"windowType": "Layout", "databaseId": db["databaseId"]})
         cv = ArchicadCanvas(sh.size, solid, pen=acfg.get("pen", 1), pen_for=pen_for, layer=layer, font=font)
         sh.draw(cv)
         total += cv.flush(c)
         log(f"  [{i}/{len(all_sheets)}] {sh.title}")
+
+    # 4) каталог фрагментами на свои листы
+    if sched:
+        page_dbs = [dbs[all_sheets.index(sh)]["databaseId"] for sh in sched["sheets"]]
+        if sched["ok"]:
+            n = place_fragments(c, sched["item"], sched["frags"], page_dbs,
+                                sched["w"], sched["h"], sched["hh"], sched["rh"])
+        else:
+            c.tapir("CreateDrawings", {"drawingsData": [{
+                "navigatorItemId": sched["item"]["navigatorItemId"], "layoutDatabaseId": page_dbs[0],
+                "position": {"x": SCH_LEFT, "y": SCH_TOP - sched["h"]}, "scale": 1.0}]})
+            n = 1
+        total += n
+        log(f"  каталог: {n} фрагмент(ов) на {len(page_dbs)} лист(ах)")
     c.tapir("ChangeWindow", {"windowType": "Layout", "databaseId": dbs[0]["databaseId"]})
     return {"layouts": len(all_sheets), "elements": total, "subset": subset_name}
 
