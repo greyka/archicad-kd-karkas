@@ -26,6 +26,9 @@ open(os.path.join(dst, "setup", "install.ps1"), "w", encoding="utf-8-sig").write
 shutil.copy2(os.path.join(HERE, "install.bat"), os.path.join(dst, "Установить.bat"))
 shutil.copy2(os.path.join(HERE, "uninstall.bat"), os.path.join(dst, "Удалить.bat"))
 shutil.copy2(os.path.join(ROOT, "README.md"), dst)
+# инструкция для пользователя — с BOM, чтобы Блокнот на любой Windows открыл кириллицу
+txt = open(os.path.join(HERE, "ИНСТРУКЦИЯ.txt"), encoding="utf-8-sig").read()
+open(os.path.join(dst, "ИНСТРУКЦИЯ.txt"), "w", encoding="utf-8-sig", newline="\r\n").write(txt)
 
 n = sum(len(fs) for _, _, fs in os.walk(dst))
 print(f"{dst}  ({n} файлов)")
