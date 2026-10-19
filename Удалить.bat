@@ -8,6 +8,7 @@ if exist "%LOCALAPPDATA%\Programs\uv\uv.exe" set "UV=%LOCALAPPDATA%\Programs\uv\
 for %%R in ("C:\ArchicadPlugins" "%LOCALAPPDATA%\ArchicadPlugins") do (
   if exist "%%~R\_setup\archicad_setup.py" (
     "%UV%" run --quiet --script "%%~R\_setup\archicad_setup.py" --root "%%~R" --uninstall
+    if errorlevel 2 (echo. & echo   [!!] Archicad is running. Close Archicad and run this again. & pause & exit /b 2)
     for /d %%D in ("%%~R\*") do rmdir /s /q "%%~D"
     for %%F in ("%%~R\*") do if /i not "%%~nxF"=="settings.ini" del /q "%%~F"
     echo   Removed: %%~R  ^(settings.ini kept^)

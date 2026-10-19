@@ -165,7 +165,9 @@ Step 5 "Подключаю к палитре Tapir, ярлыки «Менедж�
 if ($uv) {
     $out = & $uv run --quiet --script (Join-Path $Root "_setup\archicad_setup.py") --root $Root --uv $uv 2>&1
     $out | ForEach-Object { Doing "$_" }
-    if ($LASTEXITCODE -eq 0) { Ok "палитра Tapir: папка $Root\tapir-scripts" } else { Bad "не удалось подключить к Tapir (код $LASTEXITCODE) — см. журнал" }
+    if ($LASTEXITCODE -eq 0) { Ok "палитра Tapir: папка $Root\tapir-scripts" }
+    elseif ($LASTEXITCODE -eq 2) { Bad "Archicad открыт — палитра Tapir не подключена. Закройте Archicad и запустите установку снова" }
+    else { Bad "не удалось подключить к Tapir (код $LASTEXITCODE) — см. журнал" }
 } else {
     Info "пропущено — нет uv"
 }

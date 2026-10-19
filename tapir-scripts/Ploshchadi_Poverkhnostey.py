@@ -29,6 +29,7 @@ sys.path.insert(0, KD_PLUGIN)
 import subprocess                                  # noqa: E402
 
 from kd.archicad import ArchicadError, Client      # noqa: E402
+from kd.pick import pick_port                     # noqa: E402
 from kd.config import MANAGER_EXE, load_config, plugins_version   # noqa: E402
 from kd.surfaces import collect, write_report      # noqa: E402
 
@@ -64,6 +65,12 @@ def main():
     ap.add_argument("--port", type=int)
     ap.add_argument("--host")
     args, _ = ap.parse_known_args()
+    # из палитры Tapir порт приходит в --port; из менеджера — выбираем Archicad сами
+    args.port = pick_port(TITLE, args.port)
+    if not args.port:
+        messagebox.showerror(TITLE, "Не найден открытый Archicad с аддоном Tapir.\n\n"
+                                    "Откройте проект в Archicad и запустите плагин снова.")
+        return
 
     try:
         info = Client(args.port).tapir("GetProjectInfo")

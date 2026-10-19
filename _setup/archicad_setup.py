@@ -22,6 +22,7 @@ import subprocess
 
 REPO = ("greyka", "archicad-kd-karkas")
 TITLE = "Плагины Archicad"
+PENDING = False                         # True — нужно повторить после закрытия Archicad
 SCRIPTS_PATTERN = r"[^/\\]+\.py"          # только скрипты верхнего уровня tapir-scripts
 
 
@@ -80,12 +81,17 @@ def register_tapir(root, uv=None):
     if os.path.isfile(cfg_path):
         with open(cfg_path, encoding="utf-8-sig") as f:
             old = json.load(f)
-    if old != cfg:
+    if old != cfg and archicad_running():
+        # Tapir перечитывает конфиг на ходу — запись при открытом Archicad уронила его (2026-10-19)
+        notes.append("!! Archicad открыт — палитру Tapir не трогаю (иначе Archicad может упасть). "
+                     "Закройте Archicad и нажмите «Подключить в Archicad заново» в менеджере "
+                     "(или запустите установку снова).")
+        global PENDING
+        PENDING = True
+    elif old != cfg:
         with open(cfg_path, "w", encoding="utf-8", newline="\n") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=4)
         notes.append(f"палитра Tapir: подключена папка {path}")
-        if archicad_running():
-            notes.append("Archicad открыт — перезапустите его, чтобы палитра Tapir подхватила изменения")
     else:
         notes.append(f"палитра Tapir: папка {path} уже подключена — без изменений")
 
@@ -153,6 +159,9 @@ def find_uv(name="uv.exe"):
 
 def uninstall(root):
     """Убирает папку из палитры Tapir и ярлыки (файлы удаляет «Удалить.bat»)."""
+    if archicad_running():
+        print("!! Archicad открыт — закройте его и запустите удаление снова (иначе Archicad может упасть).")
+        raise SystemExit(2)
     cfg_path = os.path.join(documents(), "Tapir", "config.json")
     path = os.path.normcase(os.path.join(os.path.abspath(root), "tapir-scripts"))
     if os.path.isfile(cfg_path):
@@ -188,6 +197,8 @@ def main():
         print(n)
     for lnk in install_shortcuts(a.root, uvw):
         print("ярлык:", lnk)
+    if PENDING:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

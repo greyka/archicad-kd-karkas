@@ -1,4 +1,4 @@
-// «Менеджер плагинов Archicad» — версия, настройки (settings.ini), обновление с GitHub.
+﻿// «Менеджер плагинов Archicad» — версия, настройки (settings.ini), обновление с GitHub.
 // Тот же код и вид, что у «Менеджера плагинов КОМПАС».
 // Сборка: _setup\manager\build.ps1 (csc из .NET Framework 4.x, есть в любой Windows 10/11).
 // Окно ничего не знает о плагинах заранее: список берётся из tapir-scripts/*.ini,
@@ -290,8 +290,13 @@ namespace ArchicadPlugins
             {
                 var sec = CurrentSection();
                 if (sec == null) return;
-                foreach (var it in sec.Items) Store.Values.Remove(it.Section + "." + it.Key);
+                foreach (var it in sec.Items)
+                {
+                    Store.Values.Remove(it.Section + "." + it.Key);
+                    editors.Remove(it);         // иначе ShowSection → SaveEditors вернёт старые значения
+                }
                 ShowSection();
+                lblStatusSet("Значения по умолчанию — нажмите «Сохранить»");
             };
             var bFile = new Button { Text = "Открыть settings.ini", AutoSize = true };
             bFile.Click += (s, e) => { SaveEditors(); Store.Save(); Process.Start("notepad.exe", "\"" + Store.File + "\""); };
@@ -480,7 +485,7 @@ namespace ArchicadPlugins
                     lblLatest.ForeColor = avail ? Color.DarkGreen : SystemColors.ControlText;
                     string title = (string)d["title"], notes = (string)d["notes"];
                     string text = notes.StartsWith(title) || notes.Length == 0 ? (notes.Length > 0 ? notes : title) : title + "\n\n" + notes;
-                    txtNotes.Text = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
+                    txtNotes.Text = text.Replace("**", "").Replace("`", "").Replace("\r\n", "\n").Replace("\n", "\r\n");
                     btnUpdate.Enabled = avail || pending;
                     btnUpdate.Text = avail ? "Обновить до " + d["latest_version"] : (pending ? "Подключить новые плагины" : "Обновить сейчас");
                 }
@@ -515,7 +520,7 @@ namespace ArchicadPlugins
             var tb = new TextBox
             {
                 Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, BackColor = SystemColors.Window,
-                Text = File.Exists(f) ? File.ReadAllText(f, Encoding.UTF8).Replace("\r\n", "\n").Replace("\n", "\r\n") : "Нет файла CHANGELOG.md"
+                Text = File.Exists(f) ? File.ReadAllText(f, Encoding.UTF8).Replace("**", "").Replace("`", "").Replace("\r\n", "\n").Replace("\n", "\r\n") : "Нет файла CHANGELOG.md"
             };
             tabAbout.Controls.Add(tb);
         }
