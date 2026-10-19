@@ -101,7 +101,7 @@ def configured() -> bool:
     return all(_settings())
 
 
-def _api(token, method, fields, file=None, timeout=30):
+def _api(token, method, fields, file=None, timeout=30, field="document"):
     url = f"https://api.telegram.org/bot{token}/{method}"
     if file is None:
         data = json.dumps(fields).encode("utf-8")
@@ -112,7 +112,7 @@ def _api(token, method, fields, file=None, timeout=30):
         for k, v in fields.items():
             body.write(f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode("utf-8"))
         name, blob = file
-        body.write(f'--{b}\r\nContent-Disposition: form-data; name="document"; filename="{name}"\r\n'
+        body.write(f'--{b}\r\nContent-Disposition: form-data; name="{field}"; filename="{name}"\r\n'
                    f"Content-Type: text/plain\r\n\r\n".encode("utf-8"))
         body.write(blob)
         body.write(f"\r\n--{b}--\r\n".encode("utf-8"))
@@ -161,20 +161,80 @@ def send(title: str, error: str = "", comment: str = "", log: str | None = None)
     # одно сообщение «файл + подпись» — его удобно переслать боту целиком (см. inbox)
     full = text.encode("utf-8") + b"\n\n" + ("=" * 60).encode() + b"\n" + blob
     caption = text if len(text) <= 1000 else text[:990] + "\n…(полностью — в файле)"
-    _api(token, "sendDocument", {"chat_id": chat, "caption": caption},
-         (f"{_state['plugin']}_{time.strftime('%Y%m%d_%H%M%S')}.log", full), timeout=60)
+    msg = _api(token, "sendDocument", {"chat_id": chat, "caption": caption},
+               (f"{_state['plugin']}_{time.strftime('%Y%m%d_%H%M%S')}.log", full), timeout=60)["result"]
+    try:
+        _register(token, chat, msg, text)
+    except Exception as e:                      # реестр — для разбора; сам отчёт уже ушёл
+        print(f"Реестр отчётов: {e}")
     return "Отчёт отправлен разработчику."
 
 
+INDEX_NAME = "reports_index.jsonl"
+
+
+def _download(token, file_id) -> bytes:
+    path = _api(token, "getFile", {"file_id": file_id})["result"]["file_path"]
+    return urllib.request.urlopen(f"https://api.telegram.org/file/bot{token}/{path}", timeout=60).read()
+
+
+def _pinned_index(token, chat):
+    """→ (message_id, байты реестра) закреплённого реестра или (None, b"")."""
+    pin = _api(token, "getChat", {"chat_id": chat})["result"].get("pinned_message") or {}
+    doc = pin.get("document") or {}
+    if doc.get("file_name") == INDEX_NAME:
+        return pin["message_id"], _download(token, doc["file_id"])
+    return None, b""
+
+
+def _register(token, chat, msg, text):
+    """Дописывает отчёт в закреплённый файл-реестр: свои сообщения бот не читает,
+    а закреплённое — может (getChat), так разработчик забирает отчёты без пересылки."""
+    entry = {"message_id": msg["message_id"], "date": msg["date"], "file_id": msg["document"]["file_id"],
+             "file_name": msg["document"].get("file_name"), "text": text}
+    mid, blob = _pinned_index(token, chat)
+    blob += (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8")
+    if mid:
+        _api(token, "editMessageMedia",
+             {"chat_id": chat, "message_id": mid,
+              "media": json.dumps({"type": "document", "media": "attach://index",
+                                   "caption": "Реестр отчётов (служебное, не откреплять)"})},
+             (INDEX_NAME, blob), field="index")
+    else:
+        new = _api(token, "sendDocument", {"chat_id": chat, "disable_notification": "true",
+                                           "caption": "Реестр отчётов (служебное, не откреплять)"},
+                   (INDEX_NAME, blob))["result"]
+        _api(token, "pinChatMessage", {"chat_id": chat, "message_id": new["message_id"],
+                                       "disable_notification": True})
+
+
 def inbox(out_dir: str) -> list[str]:
-    """Забирает отчёты, которые пользователь ПЕРЕСЛАЛ боту (свои сообщения бот не видит).
+    """Забирает новые отчёты: из закреплённого реестра и пересланные боту вручную.
 
     Telegram хранит такие сообщения ~24 ч — после разбора их подтверждаем (offset), чтобы не дублировать.
     → список сохранённых папок.
     """
     token, chat = _settings()
+    saved = []
+    # 1) реестр в закреплённом сообщении — все отчёты, без участия пользователя
+    _, blob = _pinned_index(token, chat)
+    for line in blob.decode("utf-8", "replace").splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        d = os.path.join(out_dir, time.strftime("%Y%m%d_%H%M%S", time.localtime(e["date"])) + f"_m{e['message_id']}")
+        if os.path.isdir(d):
+            continue                            # уже забран
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "message.txt"), "w", encoding="utf-8") as f:
+            f.write(e.get("text", ""))
+        with open(os.path.join(d, e.get("file_name") or "log.txt"), "wb") as f:
+            f.write(_download(token, e["file_id"]))
+        saved.append(d)
+    # 2) то, что пользователь переслал боту вручную
     res = _api(token, "getUpdates", {"timeout": 0})
-    saved, last = [], None
+    last = None
     for u in res.get("result", []):
         last = u["update_id"]
         m = u.get("message") or {}
@@ -189,10 +249,8 @@ def inbox(out_dir: str) -> list[str]:
         with open(os.path.join(d, "message.txt"), "w", encoding="utf-8") as f:
             f.write(text + ("\n\nКомментарий при пересылке: " + m["text"] if src is not m and m.get("text") else ""))
         if doc:
-            path = _api(token, "getFile", {"file_id": doc["file_id"]})["result"]["file_path"]
-            blob = urllib.request.urlopen(f"https://api.telegram.org/file/bot{token}/{path}", timeout=60).read()
             with open(os.path.join(d, doc.get("file_name") or "log.txt"), "wb") as f:
-                f.write(blob)
+                f.write(_download(token, doc["file_id"]))
         saved.append(d)
     if last is not None:
         _api(token, "getUpdates", {"offset": last + 1, "timeout": 0})
@@ -310,7 +368,7 @@ def main(argv=None):
     _state["plugin"] = a.plugin
     if a.inbox:
         got = inbox(a.inbox)
-        print("\n".join(got) if got else "Новых пересланных отчётов нет.")
+        print("\n".join(got) if got else "Новых отчётов нет.")
     elif a.test:
         print(send("Проверка отправки отчётов", comment="тест"))
     else:
