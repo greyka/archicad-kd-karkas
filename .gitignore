@@ -1,3 +1,7 @@
 out/
 __pycache__/
 *.pyc
+settings.ini
+version.txt
+*.old
+*.old[0-9]*

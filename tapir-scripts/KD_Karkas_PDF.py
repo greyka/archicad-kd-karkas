@@ -13,13 +13,13 @@
 ##############################################
 
 import argparse
-import io
+import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import urllib.request
-import zipfile
 import tkinter as tk
 import traceback
 from tkinter import messagebox, ttk
@@ -32,20 +32,14 @@ KD_PLUGIN = os.environ.get("KD_PLUGIN_DIR") or next(
      if os.path.isdir(os.path.join(p, "kd"))), os.path.join(_here, "kd_plugin"))
 sys.path.insert(0, KD_PLUGIN)
 
-from kd import __version__                         # noqa: E402
 from kd.__main__ import main as kd_main            # noqa: E402
 from kd.archicad import ArchicadError, Client      # noqa: E402
-from kd.config import USER_PATH, load_config       # noqa: E402
+from kd.config import MANAGER_EXE, USER_PATH, load_config, plugins_version   # noqa: E402
 
-TITLE = f"КД каркаса  v{__version__}"
+VERSION = plugins_version()
+TITLE = f"КД каркаса  v{VERSION}"
 REPO = "greyka/archicad-kd-karkas"
-VERSION_FILE = "tapir-scripts/kd_plugin/kd/__init__.py"
-API_VERSION = f"https://api.github.com/repos/{REPO}/contents/{VERSION_FILE}?ref=main"
-RAW_VERSION = f"https://raw.githubusercontent.com/{REPO}/main/{VERSION_FILE}"
-ZIP_URL = f"https://codeload.github.com/{REPO}/zip/refs/heads/main"
-# обновлять себя можно только в установленной раскладке (скрипт + kd_plugin рядом)
-INSTALLED = (os.path.normcase(KD_PLUGIN) == os.path.normcase(os.path.join(_here, "kd_plugin"))
-             and not os.path.isdir(os.path.join(os.path.dirname(_here), ".git")))
+RELEASES_URL = f"https://github.com/{REPO}/releases"
 
 MODES = [
     ("pdf",     "Только PDF-файл (быстро, проект не меняется)"),
@@ -61,35 +55,22 @@ def _vt(v):
 
 
 def remote_version():
-    """Версия плагина в ветке main на GitHub (None — нет сети)."""
-    # API отдаёт свежее сразу; raw.githubusercontent кэширует до 5 минут — запасной
-    for url, hdr in ((API_VERSION, {"Accept": "application/vnd.github.raw", "User-Agent": "kd-plugin"}),
-                     (RAW_VERSION, {"Cache-Control": "no-cache"})):
-        try:
-            txt = urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=6).read().decode("utf-8")
-            m = re.search(r'__version__\s*=\s*"([^"]+)"', txt)
-            if m:
-                return m.group(1)
-        except Exception:
-            continue
-    return None
+    """Последняя выпущенная версия на GitHub (тег релиза), None — нет сети."""
+    try:
+        req = urllib.request.Request(f"https://api.github.com/repos/{REPO}/releases/latest",
+                                     headers={"User-Agent": "archicad-plugins"})
+        tag = json.loads(urllib.request.urlopen(req, timeout=6).read().decode("utf-8"))["tag_name"]
+        return tag.lstrip("vV")
+    except Exception:
+        return None
 
 
-def self_update():
-    """Скачивает tapir-scripts/ из GitHub поверх своей папки."""
-    data = urllib.request.urlopen(ZIP_URL, timeout=60).read()
-    z = zipfile.ZipFile(io.BytesIO(data))
-    root = z.namelist()[0].split("/")[0] + "/tapir-scripts/"
-    n = 0
-    for name in z.namelist():
-        if not name.startswith(root) or name.endswith("/"):
-            continue
-        path = os.path.join(_here, *name[len(root):].split("/"))
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as f:
-            f.write(z.read(name))
-        n += 1
-    return n
+def open_manager():
+    """«Настройки и версия…» — Менеджер плагинов Archicad на вкладке обновления."""
+    if os.path.isfile(MANAGER_EXE):
+        subprocess.Popen([MANAGER_EXE, "--tab=update"], cwd=os.path.dirname(MANAGER_EXE))
+        return True
+    return False
 
 
 def existing_sheets(port, cfg):
@@ -165,54 +146,31 @@ def main():
 
     btn = ttk.Button(frm, text="Выпустить КД")
     btn.grid(row=4, column=1, sticky="e")
-    upd = ttk.Button(frm, text="Обновить")
+    upd = ttk.Button(frm, text="Настройки и версия…")
     upd.grid(row=4, column=0, sticky="w")
     news = tk.StringVar(value="")
     ttk.Label(frm, textvariable=news, foreground="#1a7f37").grid(row=7, column=0, columnspan=2, sticky="w")
 
     def show_version(rv):
-        if rv and _vt(rv) > _vt(__version__):
-            news.set(f"Доступна версия {rv} — нажмите «Обновить»")
+        if rv and _vt(rv) > _vt(VERSION):
+            news.set(f"Доступна версия {rv} — «Настройки и версия…» → Обновить")
         elif rv:
-            news.set(f"Установлена последняя версия ({__version__})")
+            news.set(f"Установлена последняя версия ({VERSION})")
         else:
             news.set("")
 
     threading.Thread(target=lambda: root.after(0, show_version, remote_version()), daemon=True).start()
 
-    def do_update():
-        if not INSTALLED:
-            messagebox.showinfo(TITLE, "Запуск из папки разработки — обновляйте через git pull.")
-            return
-        upd.state(["disabled"]); btn.state(["disabled"])
-        status.set("Проверяю обновления на GitHub…")
+    def settings_and_version():
+        if not open_manager():
+            if messagebox.askyesno(
+                    TITLE, "Менеджер плагинов не найден — плагин запущен не из папки «Плагины Archicad».\n\n"
+                           "Скачайте последнюю версию с GitHub и запустите «Установить.bat» "
+                           "(один раз на компьютер). Открыть страницу загрузки?"):
+                import webbrowser
+                webbrowser.open(RELEASES_URL)
 
-        def work_upd():
-            rv = remote_version()
-            if rv is None:
-                root.after(0, lambda: (status.set("Нет связи с GitHub."), upd.state(["!disabled"]),
-                                       btn.state(["!disabled"])))
-                return
-            if _vt(rv) <= _vt(__version__):
-                root.after(0, lambda: (status.set(f"Обновлений нет — у вас последняя версия {__version__}."),
-                                       upd.state(["!disabled"]), btn.state(["!disabled"])))
-                return
-            try:
-                root.after(0, status.set, f"Скачиваю версию {rv}…")
-                self_update()
-            except Exception as e:
-                root.after(0, lambda: (messagebox.showerror(TITLE, f"Не удалось обновить: {e}"),
-                                       upd.state(["!disabled"]), btn.state(["!disabled"])))
-                return
-
-            def restart():
-                messagebox.showinfo(TITLE, f"Обновлено до версии {rv}. Окно откроется заново.")
-                root.destroy()
-                os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)] + sys.argv[1:])
-            root.after(0, restart)
-        threading.Thread(target=work_upd, daemon=True).start()
-
-    upd.configure(command=do_update)
+    upd.configure(command=settings_and_version)
 
     def done(result, error):
         btn.state(["!disabled"])

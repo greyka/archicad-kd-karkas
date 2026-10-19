@@ -1,4 +1,7 @@
-﻿# Установка / обновление kd_plugin (КД каркаса) для Archicad 30.
+﻿# Установка / обновление «Плагинов Archicad» (как «Плагины КОМПАС»).
+# Запускается из «Установить.bat». Ставит/проверяет Tapir и uv, копирует плагины
+# в C:\ArchicadPlugins (нельзя писать — %LOCALAPPDATA%\ArchicadPlugins), подключает
+# папку к палитре Tapir, создаёт ярлыки «Менеджер плагинов Archicad» и автообновление.
 param([switch]$ResetConfig)
 
 $ErrorActionPreference = 'Stop'
@@ -6,26 +9,22 @@ $ProgressPreference = 'SilentlyContinue'            # без «полосы» In
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$PluginRoot = Join-Path (Split-Path -Parent $Here) "tapir-scripts"   # KD_Karkas_PDF.py + kd_plugin
-$Repo = @{ owner = "greyka"; name = "archicad-kd-karkas"; loc = "tapir-scripts"; title = "КД каркаса" }
-$Log = Join-Path $env:TEMP "kd_install.log"
+$Src = Split-Path -Parent $Here                                      # папка установщика (= репозиторий)
+$Log = Join-Path $env:TEMP "archicad_plugins_install.log"
 $Problems = New-Object System.Collections.ArrayList
-$Total = 6
+$Total = 7
 try { Start-Transcript -Path $Log -Force | Out-Null } catch {}
 
 # ------------------------------------------------------------------ вывод
-function Get-PluginVersion($kdDir) {
-    $f = Join-Path $kdDir "__init__.py"
-    if (-not (Test-Path $f)) { return $null }
-    $m = Select-String -Path $f -Pattern '__version__\s*=\s*"([^"]+)"' | Select-Object -First 1
-    if ($m) { return $m.Matches[0].Groups[1].Value } else { return "0" }
+function Read-Version($dir) {
+    $f = Join-Path $dir "VERSION"
+    if (Test-Path $f) { return (Get-Content $f -Raw).Trim() } else { return $null }
 }
 function Banner {
-    $v = Get-PluginVersion (Join-Path $PluginRoot "kd_plugin\kd")
     Write-Host ""
     Write-Host "  ==================================================" -ForegroundColor DarkCyan
-    Write-Host "     КД каркаса для Archicad 30  —  установка" -ForegroundColor White
-    Write-Host "     версия $v" -ForegroundColor Gray
+    Write-Host "     Плагины Archicad 30  —  установка" -ForegroundColor White
+    Write-Host "     версия $(Read-Version $Src)" -ForegroundColor Gray
     Write-Host "  ==================================================" -ForegroundColor DarkCyan
 }
 function Step($n, $text) {
@@ -51,7 +50,7 @@ trap {
 }
 
 # файлы из сети/zip помечены «скачано из интернета» — снимаем пометку
-Get-ChildItem $PluginRoot -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
+Get-ChildItem $Src -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
 
 Banner
 
@@ -139,67 +138,50 @@ if ($uv) {
     if ($uv) { Ok "uv установлен" } else { Bad "uv не установился — выполните вручную: winget install astral-sh.uv" }
 }
 
-# ------------------------------------------------------------------ 4. плагин
-Step 4 "Подключаю плагин и обновления с GitHub"
-$docs = [Environment]::GetFolderPath('MyDocuments')
-$tdir = Join-Path $docs "Tapir"
-$tcfg = Join-Path $tdir "config.json"
-$cs = Join-Path $tdir "custom-scripts"
-$userCfgDir = Join-Path $env:APPDATA "kd_plugin"
-$userCfg = Join-Path $userCfgDir "config.json"
-
-# старая установка (копия в custom-scripts): переносим настройки и убираем дубль кнопки
-$oldCfg = Join-Path $cs "kd_plugin\config.json"
-if ((Test-Path $oldCfg) -and -not (Test-Path $userCfg)) {
-    New-Item -ItemType Directory -Force $userCfgDir | Out-Null
-    Copy-Item $oldCfg $userCfg
-    Doing "ваши настройки перенесены в $userCfg"
+# ------------------------------------------------------------------ 4. файлы
+function Test-Writable($dir) {
+    try {
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        $t = Join-Path $dir ".write_test"; Set-Content $t "x"; Remove-Item $t -Force; return $true
+    } catch { return $false }
 }
-if ((Test-Path (Join-Path $cs "KD_Karkas_PDF.py")) -or (Test-Path (Join-Path $cs "kd_plugin"))) {
-    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $cs "KD_Karkas_PDF.py")
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $cs "kd_plugin")
-    Doing "старая копия кнопки из custom-scripts убрана"
+$Root = "C:\ArchicadPlugins"
+if (-not (Test-Writable $Root)) { $Root = Join-Path $env:LOCALAPPDATA "ArchicadPlugins"; New-Item -ItemType Directory -Force $Root | Out-Null }
+$newV = Read-Version $Src
+$oldV = Read-Version $Root
+if ($oldV) { Step 4 "Обновляю плагины в $Root : $oldV -> $newV" } else { Step 4 "Устанавливаю плагины $newV в $Root" }
+if ((Resolve-Path $Src).Path.TrimEnd('\') -ne (Resolve-Path $Root).Path.TrimEnd('\')) {
+    Doing "копирую файлы"
+    robocopy $Src $Root /E /NFL /NDL /NJH /NJS /NP /XD .git out dist __pycache__ /XF settings.ini version.txt *.pyc | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "robocopy: ошибка копирования ($LASTEXITCODE)" }
 }
+Set-Content (Join-Path $Root "version.txt") "v$newV`n$newV`nустановлено с $Src" -Encoding UTF8
+if ($ResetConfig -and (Test-Path (Join-Path $Root "settings.ini"))) { Remove-Item (Join-Path $Root "settings.ini") -Force; Info "settings.ini сброшен" }
+if (Test-Path (Join-Path $Root "settings.ini")) { Info "ваши настройки (settings.ini) сохранены" }
+Ok "плагины в $Root"
 
-# репозиторий в настройках Tapir — палитра сама скачивает и обновляет скрипты
-New-Item -ItemType Directory -Force $tdir | Out-Null
-if (Test-Path $tcfg) {
-    $j = Get-Content $tcfg -Raw -Encoding UTF8 | ConvertFrom-Json
+# ------------------------------------------------------------------ 5. Tapir + ярлыки
+Step 5 "Подключаю к палитре Tapir, ярлыки «Менеджер плагинов Archicad»"
+if ($uv) {
+    $out = & $uv run --quiet --script (Join-Path $Root "_setup\archicad_setup.py") --root $Root --uv $uv 2>&1
+    $out | ForEach-Object { Doing "$_" }
+    if ($LASTEXITCODE -eq 0) { Ok "палитра Tapir: папка $Root\tapir-scripts" } else { Bad "не удалось подключить к Tapir (код $LASTEXITCODE) — см. журнал" }
 } else {
-    $j = [pscustomobject]@{
-        repositories = @([pscustomobject]@{ displayName = "Tapir"; repoOwner = "ENZYME-APD"; repoName = "tapir-archicad-automation";
-                                            relativeLoc = "builtin-scripts"; token = ""; excludeFromDownloadPattern = "";
-                                            includePattern = ""; excludePattern = "" })
-        localFolders = @(); askUpdatingAddOnBeforeEachExecution = $false; uvLocation = ""; pythonLocation = ""
-    }
+    Info "пропущено — нет uv"
 }
-$repos = @($j.repositories)
-if ($repos | Where-Object { $_.repoOwner -eq $Repo.owner -and $_.repoName -eq $Repo.name }) {
-    Info "репозиторий $($Repo.owner)/$($Repo.name) уже подключён"
-} else {
-    $repos += [pscustomobject]@{ displayName = $Repo.title; repoOwner = $Repo.owner; repoName = $Repo.name;
-                                 relativeLoc = $Repo.loc; token = ""; excludeFromDownloadPattern = "";
-                                 includePattern = ""; excludePattern = "" }
-    $j.repositories = $repos
-    Doing "добавляю github.com/$($Repo.owner)/$($Repo.name) в палитру Tapir"
-}
-if ($uv -and -not $j.uvLocation) { $j.uvLocation = $uv; Doing "прописываю путь к uv в настройках Tapir" }
-[IO.File]::WriteAllText($tcfg, ($j | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding $false))
-Ok "плагин будет скачан и обновляться с GitHub палитрой Tapir"
-if (Test-Path $userCfg) { Info "ваши настройки: $userCfg" }
 
-# ------------------------------------------------------------------ 5. окружение
-Step 5 "Готовлю Python и библиотеку PDF (pymupdf)"
+# ------------------------------------------------------------------ 6. окружение
+Step 6 "Готовлю Python и библиотеку PDF (pymupdf)"
 if ($uv) {
     Doing "в первый раз скачивается ~40 МБ, 1-2 минуты"
-    & $uv run --quiet --script (Join-Path $PluginRoot "KD_Karkas_PDF.py") --help 2>&1 | Out-Null
+    & $uv run --quiet --script (Join-Path $Root "tapir-scripts\KD_Karkas_PDF.py") --help 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) { Ok "окружение готово" } else { Bad "не удалось подготовить окружение (код $LASTEXITCODE) — см. журнал" }
 } else {
     Info "пропущено — нет uv"
 }
 
-# ------------------------------------------------------------------ 6. шрифт
-Step 6 "Проверяю шрифт ГОСТ 2.304 (для PDF)"
+# ------------------------------------------------------------------ 7. шрифт
+Step 7 "Проверяю шрифт ГОСТ 2.304 (для PDF)"
 $gost = @("$env:WINDIR\Fonts\GOST_B.TTF", "$env:WINDIR\Fonts\GOST_BU.ttf", "$env:LOCALAPPDATA\Microsoft\Windows\Fonts\GOST_B.TTF") |
         Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($gost) { Ok "GOST type B найден" }
@@ -220,9 +202,11 @@ Write-Host "   Как запустить:" -ForegroundColor White
 if ($acRunning) { Write-Host "    1. Перезапустите Archicad 30" } else { Write-Host "    1. Запустите Archicad 30" }
 Write-Host "    2. Откройте проект с каркасом ArchiFrame"
 Write-Host "       (установлен ArchiFrame или проект .pla с вложенной библиотекой)"
-Write-Host "    3. Палитра Tapir -> в списке скриптов KD_Karkas_PDF.py (КД каркаса) -> Run"
-Write-Host "       Если его нет в списке — кнопка обновления в палитре (скачает с GitHub)."
-Write-Host "       Обновления плагина приходят сами, переустанавливать не нужно."
+Write-Host "    3. Палитра Tapir -> KD_Karkas_PDF.py (Плагины Archicad) -> Run"
+Write-Host ""
+Write-Host "   Настройки, версия, обновление: ярлык «Менеджер плагинов Archicad»"
+Write-Host "   на рабочем столе. Обновления приходят сами при входе в Windows."
+Write-Host "   После установки эту папку можно удалить — работает копия в $Root"
 Write-Host ""
 Write-Host "   Журнал установки: $Log" -ForegroundColor DarkGray
 try { Stop-Transcript | Out-Null } catch {}
