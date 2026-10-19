@@ -73,10 +73,10 @@ def installed(root):
     """(id, версия) установленной копии: id — тег или коммит из version.txt."""
     vid = ""
     if os.path.isfile(os.path.join(root, "version.txt")):
-        vid = open(os.path.join(root, "version.txt"), encoding="utf-8").read().split("\n")[0].strip()
+        vid = open(os.path.join(root, "version.txt"), encoding="utf-8-sig").read().split("\n")[0].strip()
     ver = "?"
     if os.path.isfile(os.path.join(root, "VERSION")):
-        ver = open(os.path.join(root, "VERSION"), encoding="utf-8").read().strip()
+        ver = open(os.path.join(root, "VERSION"), encoding="utf-8-sig").read().strip()
     return vid, ver
 
 

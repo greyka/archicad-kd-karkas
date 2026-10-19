@@ -155,7 +155,7 @@ if ((Resolve-Path $Src).Path.TrimEnd('\') -ne (Resolve-Path $Root).Path.TrimEnd(
     robocopy $Src $Root /E /NFL /NDL /NJH /NJS /NP /XD .git out dist __pycache__ /XF settings.ini version.txt *.pyc | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy: ошибка копирования ($LASTEXITCODE)" }
 }
-Set-Content (Join-Path $Root "version.txt") "v$newV`n$newV`nустановлено с $Src" -Encoding UTF8
+[IO.File]::WriteAllText((Join-Path $Root "version.txt"), "v$newV`n$newV`nустановлено с $Src`n", (New-Object Text.UTF8Encoding $false))
 if ($ResetConfig -and (Test-Path (Join-Path $Root "settings.ini"))) { Remove-Item (Join-Path $Root "settings.ini") -Force; Info "settings.ini сброшен" }
 if (Test-Path (Join-Path $Root "settings.ini")) { Info "ваши настройки (settings.ini) сохранены" }
 Ok "плагины в $Root"
