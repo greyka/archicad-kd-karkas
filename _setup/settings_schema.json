@@ -1,42 +1,11 @@
 {
+  "_comment": "Общие настройки комплекта. Настройки плагинов — tapir-scripts/<Плагин>.settings.json",
   "sections": [
-    {
-      "id": "general", "title": "Общие",
-      "items": [
-        {"key": "company", "path": "company", "type": "text", "default": "ЛидерХаус", "label": "Организация (штамп PDF)", "help": "В листах Archicad штамп берётся из мастер-макета"},
-        {"key": "stage",   "path": "stage",   "type": "text", "default": "КД",        "label": "Стадия (штамп PDF)"}
-      ]
-    },
-    {
-      "id": "layouts", "title": "Листы в Archicad",
-      "items": [
-        {"key": "master_a3",   "path": "archicad.master_a3",   "type": "text", "default": "А3 - А - Ф3 (!!! 1 !!!)", "label": "Мастер-макет A3", "help": "Нет такого в проекте — берётся первый A3 альбомный"},
-        {"key": "master_a4",   "path": "archicad.master_a4",   "type": "text", "default": "А4 - К - Ф3", "label": "Мастер-макет A4 (ведомость)"},
-        {"key": "subset_name", "path": "archicad.subset_name", "type": "text", "default": "КД каркаса (авто)", "label": "Подмножество в книге макетов", "help": "Листы в нём пересоздаются при каждом выпуске"},
-        {"key": "layer_name",  "path": "archicad.layer_name",  "type": "text", "default": "КД - чертежи (авто)", "label": "Слой для элементов листов"},
-        {"key": "font_index",  "path": "archicad.font_index",  "type": "int",  "default": 0, "min": 0, "max": 9999, "label": "Индекс шрифта", "help": "0 — шрифт штампа мастер-макета"}
-      ]
-    },
-    {
-      "id": "publish", "title": "Общий PDF",
-      "items": [
-        {"key": "publisher_set",   "path": "archicad.publisher_set",   "type": "text", "default": "", "label": "Набор публикации", "help": "Пусто — первый набор со словом «макет»"},
-        {"key": "publish_subsets", "path": "archicad.publish_subsets", "type": "list", "default": "КД каркаса (авто)", "label": "Подмножества в общий PDF", "help": "Через запятую, например: КД каркаса (авто), 3D-виды"}
-      ]
-    },
-    {
-      "id": "schedule", "title": "Интерактивный каталог",
-      "items": [
-        {"key": "id",             "path": "archicad.schedule.id",             "type": "text",  "default": "КД-СП", "label": "ID каталога на листах", "help": "Пусто — каталог на листы не ставится"},
-        {"key": "row_height_mm",  "path": "archicad.schedule.row_height_mm",  "type": "float", "default": 6, "min": 3, "max": 30, "label": "Высота строки каталога, мм", "help": "Как в формате каталога; по ней каталог режется на листы"}
-      ]
-    },
     {
       "id": "update", "title": "Обновление",
       "items": [
-        {"key": "auto",    "type": "bool",   "default": true,       "label": "Проверять обновления при входе в Windows"},
-        {"key": "channel", "type": "choice", "default": "releases", "label": "Что устанавливать",
-         "choices": [["releases", "Только выпущенные версии"], ["main", "Последние изменения (ветка main)"]]}
+        {"key": "auto", "type": "bool", "default": true, "label": "Проверять обновления при входе в Windows"},
+        {"key": "channel", "type": "choice", "default": "releases", "label": "Что устанавливать", "choices": [["releases", "Только выпущенные версии"], ["main", "Последние изменения (ветка main)"]]}
       ]
     }
   ]

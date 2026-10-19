@@ -49,14 +49,25 @@ def _set_path(d: dict, path: str, value) -> None:
     d[keys[-1]] = value
 
 
+def schema_sections() -> list:
+    """Разделы настроек: <плагин>.settings.json рядом со скриптами + общий _setup\\settings_schema.json."""
+    import glob
+    files = sorted(glob.glob(os.path.join(ROOT, "tapir-scripts", "*.settings.json"))) + [SCHEMA_PATH]
+    out = []
+    for f in files:
+        if os.path.isfile(f):
+            out += _read(f).get("sections", [])
+    return out
+
+
 def _from_settings_ini() -> dict:
     """Значения из settings.ini → вложенный словарь по "path" схемы."""
-    if not (os.path.isfile(SETTINGS_INI) and os.path.isfile(SCHEMA_PATH)):
+    if not os.path.isfile(SETTINGS_INI):
         return {}
     cp = configparser.ConfigParser(interpolation=None, inline_comment_prefixes=(";",))
     cp.read(SETTINGS_INI, encoding="utf-8-sig")
     out: dict = {}
-    for sec in _read(SCHEMA_PATH).get("sections", []):
+    for sec in schema_sections():
         for it in sec["items"]:
             path = it.get("path")
             raw = cp.get(sec["id"], it["key"], fallback=None)

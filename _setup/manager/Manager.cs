@@ -63,10 +63,21 @@ namespace ArchicadPlugins
             LoadValues();
         }
 
+        // Новый плагин сам попадает в настройки: рядом со скриптом кладётся <Плагин>.settings.json
+        // (формат как у _setup\settings_schema.json). Общий файл — последним (раздел «Обновление»).
         void LoadSchema()
         {
+            var scripts = Path.Combine(Root, "tapir-scripts");
+            if (Directory.Exists(scripts))
+                foreach (var f in Directory.GetFiles(scripts, "*.settings.json").OrderBy(f => f))
+                    LoadSchemaFile(f);
+            if (System.IO.File.Exists(SchemaFile)) LoadSchemaFile(SchemaFile);
+        }
+
+        void LoadSchemaFile(string path)
+        {
             var js = new JavaScriptSerializer();
-            var data = (Dictionary<string, object>)js.DeserializeObject(System.IO.File.ReadAllText(SchemaFile, Encoding.UTF8));
+            var data = (Dictionary<string, object>)js.DeserializeObject(System.IO.File.ReadAllText(path, Encoding.UTF8));
             foreach (Dictionary<string, object> s in (object[])data["sections"])
             {
                 var sec = new SettingSection { Id = (string)s["id"], Title = (string)s["title"] };
@@ -212,19 +223,39 @@ namespace ArchicadPlugins
                 Text = "Версия плагинов: " + ReadVersion() + "\r\nПапка: " + Root
             };
             var list = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, GridLines = true };
-            list.Columns.Add("Плагин (палитра Tapir в Archicad)", 230);
+            list.Columns.Add("Плагин (запуск отсюда или из палитры Tapir)", 260);
             list.Columns.Add("Что делает", 540);
             var scripts = Path.Combine(Root, "tapir-scripts");
             if (Directory.Exists(scripts))
                 foreach (var ini in Directory.GetFiles(scripts, "*.ini").OrderBy(f => f))
                 {
                     var kv = ReadIni(ini, "plugin");
-                    string name, desc;
+                    string name, desc, script;
                     kv.TryGetValue("name", out name);
                     kv.TryGetValue("description", out desc);
-                    list.Items.Add(new ListViewItem(new[] { name ?? Path.GetFileNameWithoutExtension(ini), desc ?? "" }));
+                    if (!kv.TryGetValue("script", out script)) script = Path.GetFileNameWithoutExtension(ini) + ".py";
+                    var item = new ListViewItem(new[] { name ?? Path.GetFileNameWithoutExtension(ini), desc ?? "" });
+                    item.Tag = Path.Combine(scripts, script);
+                    list.Items.Add(item);
                 }
+            if (list.Items.Count > 0) list.Items[0].Selected = true;
             var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 46, Padding = new Padding(6) };
+            var bRun = new Button { Text = "Запустить", AutoSize = true, Font = new Font(Font, FontStyle.Bold) };
+            tips.SetToolTip(bRun, "Запустить выбранный плагин для открытого проекта Archicad (двойной клик по строке — то же).");
+            Action run = () =>
+            {
+                if (list.SelectedItems.Count == 0) return;
+                var script = (string)list.SelectedItems[0].Tag;
+                if (!File.Exists(script)) { MessageBox.Show(this, "Нет файла " + script, "Запуск плагина"); return; }
+                var uv = UvExe();
+                var uvw = Path.Combine(Path.GetDirectoryName(uv) ?? "", "uvw.exe");
+                var psi = new ProcessStartInfo(File.Exists(uvw) ? uvw : uv, "run --quiet --script \"" + script + "\"")
+                    { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(script) };
+                try { Process.Start(psi); }
+                catch (Exception ex) { MessageBox.Show(this, "Не удалось запустить: " + ex.Message + "\r\nЗапустите «Установить.bat».", "Запуск плагина"); }
+            };
+            bRun.Click += (s, e) => run();
+            list.DoubleClick += (s, e) => run();
             var bOpen = new Button { Text = "Открыть папку плагинов", AutoSize = true };
             bOpen.Click += (s, e) => Process.Start("explorer.exe", "\"" + Root + "\"");
             var bReg = new Button { Text = "Подключить в Archicad заново", AutoSize = true };
@@ -236,7 +267,7 @@ namespace ArchicadPlugins
                     MessageBox.Show(this, output.Trim().Length > 0 ? output.Trim() : "Готово.", "Подключение к Archicad",
                                     MessageBoxButtons.OK, MessageBoxIcon.Information));
             };
-            bar.Controls.AddRange(new Control[] { bOpen, bReg });
+            bar.Controls.AddRange(new Control[] { bRun, bOpen, bReg });
             tabPlugins.Controls.Add(list);
             tabPlugins.Controls.Add(bar);
             tabPlugins.Controls.Add(head);

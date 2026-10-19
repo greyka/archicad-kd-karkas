@@ -1,0 +1,15 @@
+{
+  "_comment": "Настройки плагина «Площади поверхностей» — менеджер показывает их сам.",
+  "sections": [
+    {
+      "id": "surfaces", "title": "Площади поверхностей",
+      "items": [
+        {"key": "selected", "path": "surfaces.selected", "type": "bool", "default": true, "label": "По умолчанию — только выделенные элементы"},
+        {"key": "layer", "path": "surfaces.layer", "type": "text", "default": "", "label": "Слой содержит", "help": "Пусто — все слои; например: лестниц"},
+        {"key": "min_width", "path": "surfaces.min_width", "type": "float", "default": 0, "min": 0, "max": 2000, "label": "Мин. ширина, мм", "help": "0 — все; отсекает узкие (косоуры, стойки)"},
+        {"key": "thickness", "path": "surfaces.thickness", "type": "float", "default": 40, "min": 0, "max": 500, "label": "Толщина досок без библиотеки, мм", "help": "Доски ArchiFrame с загруженной библиотекой считаются по своей толщине"},
+        {"key": "open_report", "path": "surfaces.open_report", "type": "bool", "default": true, "label": "Открывать отчёт после расчёта"}
+      ]
+    }
+  ]
+}

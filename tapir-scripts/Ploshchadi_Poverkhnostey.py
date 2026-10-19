@@ -44,6 +44,14 @@ def open_manager():
                                    "из комплекта «Плагины Archicad».")
 
 
+def fmt(x, nd=None):
+    """Число по-русски: 15,28; целые без «,0»."""
+    x = float(x or 0)
+    if nd is None:
+        return f"{x:g}".replace(".", ",")
+    return f"{x:.{nd}f}".replace(".", ",")
+
+
 def default_output(info):
     path = info.get("projectPath") or info.get("projectLocation")
     name = info.get("projectName") or "проект"
@@ -62,7 +70,9 @@ def main():
     except Exception:
         messagebox.showerror(TITLE, "Нет связи с Archicad.\n\nЗапустите скрипт из палитры Tapir.")
         return
-    cfg = load_config().get("archicad", {})
+    full = load_config()
+    cfg = full.get("archicad", {})
+    sset = full.get("surfaces", {})              # умолчания — «Менеджер плагинов» → «Площади поверхностей»
 
     root = tk.Tk()
     root.title(TITLE)
@@ -70,13 +80,13 @@ def main():
     frm = ttk.Frame(root, padding=12)
     frm.grid()
 
-    selected = tk.BooleanVar(value=True)
+    selected = tk.BooleanVar(value=bool(sset.get("selected", True)))
     ttk.Checkbutton(frm, text="Только выделенные элементы", variable=selected).grid(
         row=0, column=0, columnspan=2, sticky="w")
 
-    fields = [("Слой содержит (пусто — все):", ""),
-              ("Мин. ширина, мм (0 — все):", "0"),
-              ("Толщина досок без библиотеки, мм:", "40"),
+    fields = [("Слой содержит (пусто — все):", sset.get("layer") or ""),
+              ("Мин. ширина, мм (0 — все):", fmt(sset.get("min_width", 0))),
+              ("Толщина досок без библиотеки, мм:", fmt(sset.get("thickness", 40))),
               ("Отчёт HTML:", default_output(info))]
     vars_ = []
     for i, (label, val) in enumerate(fields, start=1):
@@ -112,10 +122,11 @@ def main():
             messagebox.showerror(TITLE, error)
             return
         status.set(msg)
-        try:
-            os.startfile(path)
-        except OSError:
-            pass
+        if sset.get("open_report", True):
+            try:
+                os.startfile(path)
+            except OSError:
+                pass
 
     def work():
         try:
@@ -132,7 +143,7 @@ def main():
             if num(minw, "Мин. ширина"):
                 note.append(f"ширина ≥ {minw.get()} мм")
             path, total, face, missing = write_report(rows, path, info.get("projectName") or "", ", ".join(note))
-            msg = (f"Элементов {len(rows)}: все поверхности {total:.2f} м², пласть {face:.2f} м²"
+            msg = (f"Элементов {len(rows)}: все поверхности {fmt(total, 2)} м², пласть {fmt(face, 2)} м²"
                    + (f"; без площади {missing}" if missing else ""))
             root.after(0, done, msg, path, None)
         except ArchicadError as e:

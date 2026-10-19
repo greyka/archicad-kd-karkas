@@ -16,6 +16,8 @@
     "schedule": { "id": "КД-СП", "row_height_mm": 6 }
   },
 
+  "surfaces": { "selected": true, "layer": "", "min_width": 0, "thickness": 40, "open_report": true },
+
   "layer_prefixes": {
     "Верхняя обвязка": "BO",
     "Стропильная система": "CT",
