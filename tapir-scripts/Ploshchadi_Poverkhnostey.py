@@ -32,6 +32,7 @@ from kd.archicad import ArchicadError, Client      # noqa: E402
 from kd.pick import pick_port                     # noqa: E402
 from kd.config import MANAGER_EXE, load_config, plugins_version   # noqa: E402
 from kd.surfaces import collect, write_report      # noqa: E402
+from kd import report                             # noqa: E402
 
 TITLE = f"Площади поверхностей  v{plugins_version()}"
 
@@ -61,6 +62,8 @@ def default_output(info):
 
 
 def main():
+    report.start_log("Ploshchadi_Poverkhnostey")
+    report.install_hooks(TITLE)
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int)
     ap.add_argument("--host")
@@ -77,6 +80,7 @@ def main():
     except Exception:
         messagebox.showerror(TITLE, "Нет связи с Archicad.\n\nЗапустите скрипт из палитры Tapir.")
         return
+    report.set_project(info.get("projectName") or "")
     full = load_config()
     cfg = full.get("archicad", {})
     sset = full.get("surfaces", {})              # умолчания — «Менеджер плагинов» → «Площади поверхностей»
@@ -84,6 +88,7 @@ def main():
     root = tk.Tk()
     root.title(TITLE)
     root.resizable(False, False)
+    report.fix_hotkeys(root)
     frm = ttk.Frame(root, padding=12)
     frm.grid()
 
@@ -114,6 +119,8 @@ def main():
     btn.grid(row=6, column=1, sticky="e", pady=(8, 0))
     ttk.Button(frm, text="Настройки и версия…", command=open_manager).grid(
         row=6, column=0, sticky="w", pady=(8, 0))
+    ttk.Button(frm, text="Сообщить о проблеме…", command=lambda: report.report_dialog(TITLE, "", root)).grid(
+        row=8, column=0, sticky="w", pady=(6, 0))
 
     def num(v, name):
         s = v.get().strip().replace(",", ".")
@@ -122,12 +129,16 @@ def main():
         except ValueError:
             raise ArchicadError(f"«{name}»: нужно число, а не «{v.get()}».")
 
-    def done(msg, path, error):
+    def done(msg, path, error, crash=False):
         btn.state(["!disabled"])
         if error:
             status.set("Ошибка.")
-            messagebox.showerror(TITLE, error)
+            if crash:                           # неожиданная — с кнопкой «Отправить разработчику»
+                report.report_dialog(TITLE, error, root)
+            else:
+                messagebox.showerror(TITLE, error)
             return
+        print(msg)
         status.set(msg)
         if sset.get("open_report", True):
             try:
@@ -154,9 +165,12 @@ def main():
                    + (f"; без площади {missing}" if missing else ""))
             root.after(0, done, msg, path, None)
         except ArchicadError as e:
+            print(f"Ошибка Archicad: {e}")
             root.after(0, done, "", "", str(e))
         except Exception:
-            root.after(0, done, "", "", traceback.format_exc(limit=3))
+            tb = traceback.format_exc()
+            print(tb)
+            root.after(0, done, "", "", tb, True)
 
     def run():
         btn.state(["disabled"])

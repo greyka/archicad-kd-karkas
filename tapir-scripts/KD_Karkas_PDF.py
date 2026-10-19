@@ -36,6 +36,7 @@ from kd.__main__ import main as kd_main            # noqa: E402
 from kd.archicad import ArchicadError, Client      # noqa: E402
 from kd.pick import pick_port                     # noqa: E402
 from kd.config import MANAGER_EXE, USER_PATH, load_config, plugins_version   # noqa: E402
+from kd import report                             # noqa: E402
 
 VERSION = plugins_version()
 TITLE = f"КД каркаса  v{VERSION}"
@@ -104,6 +105,8 @@ def default_output(info):
 
 
 def main():
+    report.start_log("KD_Karkas_PDF")
+    report.install_hooks(TITLE)
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int)
     ap.add_argument("--host")
@@ -119,12 +122,14 @@ def main():
     if not info:
         messagebox.showerror(TITLE, "Нет связи с Archicad.\n\nЗапустите скрипт из палитры Tapir.")
         return
+    report.set_project(info.get("projectName") or "")
 
     cfg = load_config()
 
     root = tk.Tk()
     root.title(TITLE)
     root.resizable(False, False)
+    report.fix_hotkeys(root)
     frm = ttk.Frame(root, padding=12)
     frm.grid()
 
@@ -157,6 +162,8 @@ def main():
     upd.grid(row=4, column=0, sticky="w")
     news = tk.StringVar(value="")
     ttk.Label(frm, textvariable=news, foreground="#1a7f37").grid(row=7, column=0, columnspan=2, sticky="w")
+    ttk.Button(frm, text="Сообщить о проблеме…", command=lambda: report.report_dialog(TITLE, "", root)).grid(
+        row=8, column=0, sticky="w", pady=(6, 0))
 
     def show_version(rv):
         if rv and _vt(rv) > _vt(VERSION):
@@ -179,11 +186,14 @@ def main():
 
     upd.configure(command=settings_and_version)
 
-    def done(result, error):
+    def done(result, error, crash=False):
         btn.state(["!disabled"])
         if error:
             status.set("Ошибка.")
-            messagebox.showerror(TITLE, error)
+            if crash:                           # неожиданная — с кнопкой «Отправить разработчику»
+                report.report_dialog(TITLE, error, root)
+            else:
+                messagebox.showerror(TITLE, error)
             return
         if result and os.path.isfile(result):
             status.set(f"Готово: {result}")
@@ -207,15 +217,21 @@ def main():
             argv.append("--publish")
         if m == "props":
             argv += ["--props", "--no-pdf"]
+        print(f"Режим: {m}  argv={argv}")
         try:
             res = kd_main(argv)
+            print(f"Готово: {res}")
             root.after(0, done, res, None)
         except ArchicadError as e:
+            print(f"Ошибка Archicad: {e}")
             root.after(0, done, None, str(e))
         except SystemExit as e:
+            print(f"Прервано: {e.code}")
             root.after(0, done, None, str(e.code or "Прервано"))
         except Exception:
-            root.after(0, done, None, traceback.format_exc(limit=3))
+            tb = traceback.format_exc()
+            print(tb)
+            root.after(0, done, None, tb, True)
 
     def run():
         m = mode.get()

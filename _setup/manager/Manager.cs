@@ -267,7 +267,21 @@ namespace ArchicadPlugins
                     MessageBox.Show(this, output.Trim().Length > 0 ? output.Trim() : "Готово.", "Подключение к Archicad",
                                     MessageBoxButtons.OK, MessageBoxIcon.Information));
             };
-            bar.Controls.AddRange(new Control[] { bRun, bOpen, bReg });
+            var bBug = new Button { Text = "Сообщить о проблеме…", AutoSize = true };
+            tips.SetToolTip(bBug, "Отправить разработчику журнал выбранного плагина и ваш комментарий (Telegram).");
+            bBug.Click += (s, e) =>
+            {
+                var plugin = list.SelectedItems.Count > 0 ? Path.GetFileNameWithoutExtension((string)list.SelectedItems[0].Tag) : "plugins";
+                var sender = Path.Combine(Root, "_setup", "send_report.py");
+                var uv = UvExe();
+                var uvw = Path.Combine(Path.GetDirectoryName(uv) ?? "", "uvw.exe");
+                var psi = new ProcessStartInfo(File.Exists(uvw) ? uvw : uv,
+                                               "run --quiet --script \"" + sender + "\" --plugin \"" + plugin + "\"")
+                    { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Root };
+                try { Process.Start(psi); }
+                catch (Exception ex) { MessageBox.Show(this, "Не удалось открыть окно отчёта: " + ex.Message, "Сообщить о проблеме"); }
+            };
+            bar.Controls.AddRange(new Control[] { bRun, bOpen, bReg, bBug });
             tabPlugins.Controls.Add(list);
             tabPlugins.Controls.Add(bar);
             tabPlugins.Controls.Add(head);
