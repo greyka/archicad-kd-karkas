@@ -162,7 +162,7 @@ def main():
     upd.grid(row=4, column=0, sticky="w")
     news = tk.StringVar(value="")
     ttk.Label(frm, textvariable=news, foreground="#1a7f37").grid(row=7, column=0, columnspan=2, sticky="w")
-    ttk.Button(frm, text="Сообщить о проблеме…", command=lambda: report.report_dialog(TITLE, "", root)).grid(
+    ttk.Button(frm, text="Сообщить о проблеме…", command=lambda: report.problem_dialog(TITLE, root)).grid(
         row=8, column=0, sticky="w", pady=(6, 0))
 
     def show_version(rv):
@@ -191,7 +191,7 @@ def main():
         if error:
             status.set("Ошибка.")
             if crash:                           # неожиданная — с кнопкой «Отправить разработчику»
-                report.report_dialog(TITLE, error, root)
+                report.error_dialog(TITLE, error, root)
             else:
                 messagebox.showerror(TITLE, error)
             return

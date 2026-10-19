@@ -24,12 +24,23 @@ namespace ArchicadPlugins
         [STAThread]
         static void Main(string[] args)
         {
-            string tab = null;
+            string tab = null, plugin = "", errorFile = null, title = null;
+            bool report = false;
             foreach (var a in args)
+            {
                 if (a.StartsWith("--tab=")) tab = a.Substring(6);
+                else if (a == "--report") report = true;
+                else if (a.StartsWith("--plugin=")) plugin = a.Substring(9);
+                else if (a.StartsWith("--error=")) errorFile = a.Substring(8);
+                else if (a.StartsWith("--title=")) title = a.Substring(8);
+            }
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new MainForm(tab));
+            var root = Path.GetDirectoryName(Application.ExecutablePath);
+            if (report)
+                Application.Run(new ReportForm(root, plugin, errorFile, title));
+            else
+                Application.Run(new MainForm(tab));
         }
     }
 
@@ -271,15 +282,8 @@ namespace ArchicadPlugins
             tips.SetToolTip(bBug, "Отправить разработчику журнал выбранного плагина и ваш комментарий (Telegram).");
             bBug.Click += (s, e) =>
             {
-                var plugin = list.SelectedItems.Count > 0 ? Path.GetFileNameWithoutExtension((string)list.SelectedItems[0].Tag) : "plugins";
-                var sender = Path.Combine(Root, "_setup", "send_report.py");
-                var uv = UvExe();
-                var uvw = Path.Combine(Path.GetDirectoryName(uv) ?? "", "uvw.exe");
-                var psi = new ProcessStartInfo(File.Exists(uvw) ? uvw : uv,
-                                               "run --quiet --script \"" + sender + "\" --plugin \"" + plugin + "\"")
-                    { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Root };
-                try { Process.Start(psi); }
-                catch (Exception ex) { MessageBox.Show(this, "Не удалось открыть окно отчёта: " + ex.Message, "Сообщить о проблеме"); }
+                var plugin = list.SelectedItems.Count > 0 ? Path.GetFileNameWithoutExtension((string)list.SelectedItems[0].Tag) : "";
+                new ReportForm(Root, plugin, null, null).ShowDialog(this);
             };
             bar.Controls.AddRange(new Control[] { bRun, bOpen, bReg, bBug });
             tabPlugins.Controls.Add(list);
@@ -556,8 +560,17 @@ namespace ArchicadPlugins
             return kv;
         }
 
+        string UvExe() { return Py.UvExe(); }
+
+        // capture=true — без окна, вывод отдаётся в done (в потоке окна)
+        void RunPython(string args, bool capture, Action<string> done) { Py.Run(this, Root, args, capture, done); }
+    }
+
+    // ---------- Python (через uv) и просмотр журнала — общее для менеджера и окна отчёта ----------
+    static class Py
+    {
         // Python для служебных скриптов — через uv (его ставит «Установить.bat»).
-        string UvExe()
+        public static string UvExe()
         {
             var la = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             try
@@ -583,7 +596,7 @@ namespace ArchicadPlugins
         }
 
         // capture=true — без окна, вывод отдаётся в done (в потоке окна)
-        void RunPython(string args, bool capture, Action<string> done)
+        public static void Run(Form owner, string Root, string args, bool capture, Action<string> done)
         {
             var psi = new ProcessStartInfo(UvExe(), "run --quiet --script " + args)
             {
@@ -610,8 +623,168 @@ namespace ArchicadPlugins
                     }
                 }
                 catch (Exception ex) { output = "Не удалось запустить uv (Python): " + ex.Message + "\r\nЗапустите «Установить.bat»."; }
-                if (done != null && !IsDisposed) BeginInvoke(done, output);
+                if (done != null && !owner.IsDisposed) owner.BeginInvoke(done, output);
             }) { IsBackground = true }.Start();
+        }
+
+        // Показать текстовый файл (журнал) в своём окне — без Блокнота: новый Блокнот Windows 11
+        // на путях с кириллицей и пробелами отвечал «Системе не удается найти указанный путь».
+        public static void ShowText(Form owner, string path, Action send = null)
+        {
+            string text;
+            try
+            {
+                using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var sr = new StreamReader(fs, Encoding.UTF8))
+                    text = sr.ReadToEnd();
+            }
+            catch (Exception ex) { MessageBox.Show(owner, "Не удалось прочитать журнал:\n" + path + "\n\n" + ex.Message); return; }
+            var f = new Form
+            {
+                Text = "Журнал — " + Path.GetFileName(path), Font = owner.Font, StartPosition = FormStartPosition.CenterParent,
+                ClientSize = new Size(900, 560), ShowIcon = false, MinimizeBox = false
+            };
+            var tb = new TextBox
+            {
+                Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false,
+                Font = new Font("Consolas", 9f), BackColor = SystemColors.Window,
+                Text = text.Replace("\r\n", "\n").Replace("\n", "\r\n")
+            };
+            var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 42, Padding = new Padding(6), FlowDirection = FlowDirection.RightToLeft };
+            var bClose = new Button { Text = "Закрыть", AutoSize = true, DialogResult = DialogResult.Cancel };
+            var bFolder = new Button { Text = "Показать файл в папке", AutoSize = true };
+            bFolder.Click += (s, e) => Process.Start("explorer.exe", "/select,\"" + path + "\"");
+            var bCopy = new Button { Text = "Копировать всё", AutoSize = true };
+            bCopy.Click += (s, e) => { if (tb.Text.Length > 0) Clipboard.SetText(tb.Text); };
+            bar.Controls.AddRange(new Control[] { bClose, bFolder, bCopy });
+            if (send != null)
+            {
+                // отправка — из окна отчёта (там комментарий и статус); журнал закрываем
+                var bSend = new Button { Text = "Отправить в Telegram", AutoSize = true, Font = new Font(owner.Font, FontStyle.Bold) };
+                bSend.Click += (s, e) => { f.Close(); send(); };
+                bar.Controls.Add(bSend);
+                f.AcceptButton = bSend;
+            }
+            f.Controls.Add(tb);
+            f.Controls.Add(bar);
+            f.CancelButton = bClose;
+            f.Shown += (s, e) => { tb.SelectionStart = tb.TextLength; tb.ScrollToCaret(); };
+            f.ShowDialog(owner);
+        }
+    }
+
+    // ---------- окно «Произошла ошибка» / «Сообщить о проблеме» (как у плагинов КОМПАС) ----------
+    // Отправку делает _setup\send_report.py --send (Telegram-бот из update.ini [report]).
+    class ReportForm : Form
+    {
+        readonly string Root, Plugin, ErrorText;
+        TextBox txtComment;
+        Label lblStatus;
+        Button btnSend;
+
+        public ReportForm(string root, string plugin, string errorFile, string title)
+        {
+            Root = root;
+            Plugin = plugin ?? "";
+            ErrorText = errorFile != null && File.Exists(errorFile) ? File.ReadAllText(errorFile, Encoding.UTF8) : "";
+            var ver = File.Exists(Path.Combine(root, "VERSION")) ? File.ReadAllText(Path.Combine(root, "VERSION")).Trim() : "?";
+            Text = (string.IsNullOrEmpty(title) ? "Плагины Archicad — версия " + ver : title);
+            Font = new Font("Segoe UI", 9.5f);
+            AutoScaleMode = AutoScaleMode.Font;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = MinimizeBox = false;
+            StartPosition = FormStartPosition.CenterScreen;
+            TopMost = true;
+            ClientSize = new Size(640, ErrorText.Length > 0 ? 470 : 280);
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+
+            var y = 12;
+            var head = new Label
+            {
+                Left = 12, Top = y, Width = 616, Height = 24, Font = new Font(Font, FontStyle.Bold),
+                Text = ErrorText.Length > 0 ? "Произошла ошибка" + (Plugin.Length > 0 ? " в плагине «" + Plugin + "»" : "") + "."
+                                            : "Отправить журнал работы разработчику."
+            };
+            Controls.Add(head);
+            y += 28;
+            if (ErrorText.Length > 0)
+            {
+                var err = new TextBox
+                {
+                    Left = 12, Top = y, Width = 616, Height = 180, Multiline = true, ReadOnly = true,
+                    ScrollBars = ScrollBars.Both, WordWrap = false, Font = new Font("Consolas", 8.5f),
+                    Text = ErrorText.Replace("\r\n", "\n").Replace("\n", "\r\n")
+                };
+                Controls.Add(err);
+                y += 188;
+            }
+            Controls.Add(new Label { Left = 12, Top = y, AutoSize = true, Text = "Что делали перед этим (необязательно):" });
+            y += 22;
+            txtComment = new TextBox { Left = 12, Top = y, Width = 616, Height = 70, Multiline = true, ScrollBars = ScrollBars.Vertical };
+            Controls.Add(txtComment);
+            y += 78;
+            lblStatus = new Label { Left = 12, Top = y, Width = 616, Height = 40, ForeColor = Color.DimGray,
+                                    Text = "Уйдёт: описание ошибки, версия, компьютер и журнал работы плагина." };
+            Controls.Add(lblStatus);
+            y += 44;
+
+            btnSend = new Button { Text = "Отправить разработчику", AutoSize = true, Top = y };
+            var bLog = new Button { Text = "Открыть журнал", AutoSize = true, Top = y };
+            var bClose = new Button { Text = "Закрыть", AutoSize = true, Top = y, DialogResult = DialogResult.Cancel };
+            Controls.AddRange(new Control[] { btnSend, bLog, bClose });
+            bClose.Left = 628 - bClose.PreferredSize.Width;
+            bLog.Left = bClose.Left - 8 - bLog.PreferredSize.Width;
+            btnSend.Left = bLog.Left - 8 - btnSend.PreferredSize.Width;
+            CancelButton = bClose;
+            ClientSize = new Size(640, y + btnSend.PreferredSize.Height + 12);
+
+            btnSend.Click += (s, e) => Send();
+            bLog.Click += (s, e) => OpenLog();
+            Shown += (s, e) => { TopMost = false; Activate(); txtComment.Focus(); };
+        }
+
+        string Script() { return Path.Combine(Root, "_setup", "send_report.py"); }
+
+        string PluginArg() { return Plugin.Length > 0 ? " --plugin \"" + Plugin + "\"" : ""; }
+
+        void OpenLog()
+        {
+            Py.Run(this, Root, "\"" + Script() + "\" --log-path" + PluginArg(), true, output =>
+            {
+                var path = output.Trim().Split('\n').Last().Trim();
+                if (File.Exists(path)) Py.ShowText(this, path, btnSend.Enabled ? (Action)Send : null);
+                else lblStatus.Text = "Журнала пока нет: " + path;
+            });
+        }
+
+        void Send()
+        {
+            btnSend.Enabled = false;
+            lblStatus.ForeColor = Color.DimGray;
+            lblStatus.Text = "Отправляю…";
+            var tmp = Path.GetTempPath();
+            var args = "\"" + Script() + "\" --send" + PluginArg();
+            if (ErrorText.Length > 0)
+            {
+                var ef = Path.Combine(tmp, "ap_report_error.txt");
+                File.WriteAllText(ef, ErrorText, new UTF8Encoding(false));
+                args += " --error-file \"" + ef + "\"";
+            }
+            if (txtComment.Text.Trim().Length > 0)
+            {
+                var cf = Path.Combine(tmp, "ap_report_comment.txt");
+                File.WriteAllText(cf, txtComment.Text, new UTF8Encoding(false));
+                args += " --comment-file \"" + cf + "\"";
+            }
+            if (Text.Length > 0 && ErrorText.Length > 0) args += " --title \"ОШИБКА: " + Text.Replace("\"", "'") + "\"";
+            Py.Run(this, Root, args, true, output =>
+            {
+                var last = output.Trim().Split('\n').Last().Trim();
+                bool ok = last.StartsWith("Отчёт отправлен");
+                lblStatus.ForeColor = ok ? Color.DarkGreen : Color.DarkRed;
+                lblStatus.Text = ok ? last + " Спасибо!" : (last.Length > 0 ? last : "Не отправилось.") + " Можно переслать файл журнала вручную.";
+                btnSend.Enabled = !ok;
+            });
         }
     }
 }

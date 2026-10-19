@@ -119,7 +119,7 @@ def main():
     btn.grid(row=6, column=1, sticky="e", pady=(8, 0))
     ttk.Button(frm, text="Настройки и версия…", command=open_manager).grid(
         row=6, column=0, sticky="w", pady=(8, 0))
-    ttk.Button(frm, text="Сообщить о проблеме…", command=lambda: report.report_dialog(TITLE, "", root)).grid(
+    ttk.Button(frm, text="Сообщить о проблеме…", command=lambda: report.problem_dialog(TITLE, root)).grid(
         row=8, column=0, sticky="w", pady=(6, 0))
 
     def num(v, name):
@@ -134,7 +134,7 @@ def main():
         if error:
             status.set("Ошибка.")
             if crash:                           # неожиданная — с кнопкой «Отправить разработчику»
-                report.report_dialog(TITLE, error, root)
+                report.error_dialog(TITLE, error, root)
             else:
                 messagebox.showerror(TITLE, error)
             return

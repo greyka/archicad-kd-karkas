@@ -1,10 +1,17 @@
-"""Журнал работы плагинов и отчёт об ошибке разработчику в Telegram.
+"""Журнал работы плагинов Archicad и отчёт об ошибке разработчику в Telegram.
 
+Устроено так же, как у плагинов КОМПАС (_setup\\report.py там), бот общий — @lider_house_debug_bot.
 Журнал: %LOCALAPPDATA%\\ArchicadPlugins\\logs\\<плагин>.log — туда же идёт всё, что плагин печатает.
-Отчёт: бот из «_setup\\update.ini», раздел [report] (bot_token, chat_id) — сообщение + файл журнала.
+Отчёт: бот из «_setup\\update.ini», раздел [report] (bot_token, chat_id) — одно сообщение:
+файл (заголовок + журнал) с подписью. Каждый отчёт дописывается в закреплённый в чате
+«Реестр отчётов» — разработчик забирает отчёты сам, без пересылки (--inbox).
 
-    python -m kd.report --test           проверить отправку
-    python -m kd.report --dialog         окно «Отправить журнал» (кнопка в менеджере)
+Окно «Произошла ошибка» / «Сообщить о проблеме» — в «Менеджер плагинов Archicad.exe» (--report);
+нет менеджера — запасное окно на tkinter.
+
+    uv run --script _setup/send_report.py --test                     проверить отправку
+    uv run --script _setup/send_report.py --send --plugin X [--error-file F] [--comment-file C]
+    uv run --script _setup/send_report.py --inbox <папка>            забрать отчёты Archicad
 """
 from __future__ import annotations
 
@@ -24,6 +31,8 @@ from .config import ROOT, plugins_version
 
 LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "ArchicadPlugins", "logs")
 MAX_LOG = 2_000_000                     # байт; больше — старый журнал уходит в .1
+SYSTEM = "Archicad"                     # метка в отчёте: бот общий с плагинами КОМПАС
+MANAGER = os.path.join(ROOT, "Менеджер плагинов Archicad.exe")
 _state = {"plugin": "plugins", "log": None, "project": ""}
 
 
@@ -136,7 +145,7 @@ def _tail(path, limit=400_000):
 
 def header(title: str) -> str:
     return "\n".join([
-        title,
+        f"[{SYSTEM}] {title}",
         f"Плагин: {_state['plugin']}  v{plugins_version()}",
         f"Проект: {_state['project'] or '—'}",
         f"Компьютер: {platform.node()}  пользователь: {getpass.getuser()}",
@@ -162,7 +171,7 @@ def send(title: str, error: str = "", comment: str = "", log: str | None = None)
     full = text.encode("utf-8") + b"\n\n" + ("=" * 60).encode() + b"\n" + blob
     caption = text if len(text) <= 1000 else text[:990] + "\n…(полностью — в файле)"
     msg = _api(token, "sendDocument", {"chat_id": chat, "caption": caption},
-               (f"{_state['plugin']}_{time.strftime('%Y%m%d_%H%M%S')}.log", full), timeout=60)["result"]
+               (f"ARCHICAD_{_state['plugin']}_{time.strftime('%Y%m%d_%H%M%S')}.log".replace(" ", "_"), full), timeout=60)["result"]
     try:
         _register(token, chat, msg, text)
     except Exception as e:                      # реестр — для разбора; сам отчёт уже ушёл
@@ -191,7 +200,7 @@ def _register(token, chat, msg, text):
     """Дописывает отчёт в закреплённый файл-реестр: свои сообщения бот не читает,
     а закреплённое — может (getChat), так разработчик забирает отчёты без пересылки."""
     entry = {"message_id": msg["message_id"], "date": msg["date"], "file_id": msg["document"]["file_id"],
-             "file_name": msg["document"].get("file_name"), "text": text}
+             "file_name": msg["document"].get("file_name"), "text": text, "system": SYSTEM}
     mid, blob = _pinned_index(token, chat)
     blob += (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8")
     if mid:
@@ -208,6 +217,14 @@ def _register(token, chat, msg, text):
                                        "disable_notification": True})
 
 
+def _is_archicad(entry) -> bool:
+    """Реестр общий с КОМПАС: свои — по метке, старые отчёты (до метки) — всё, что не КОМПАС."""
+    if entry.get("system"):
+        return entry["system"] == SYSTEM
+    name, text = entry.get("file_name") or "", entry.get("text", "")
+    return not (name.startswith("KOMPAS_") or "[КОМПАС-3D]" in text)
+
+
 def inbox(out_dir: str) -> list[str]:
     """Забирает новые отчёты: из закреплённого реестра и пересланные боту вручную.
 
@@ -222,6 +239,8 @@ def inbox(out_dir: str) -> list[str]:
         try:
             e = json.loads(line)
         except ValueError:
+            continue
+        if not _is_archicad(e):
             continue
         d = os.path.join(out_dir, time.strftime("%Y%m%d_%H%M%S", time.localtime(e["date"])) + f"_m{e['message_id']}")
         if os.path.isdir(d):
@@ -339,13 +358,43 @@ def report_dialog(title: str, error: str = "", parent=None, heading: str | None 
         parent.wait_window(win)
 
 
+def _manager_report(title: str, error: str = "") -> bool:
+    """Окно отчёта из менеджера (как у плагинов КОМПАС); False — менеджера нет."""
+    if not os.path.isfile(MANAGER):
+        return False
+    import subprocess
+    import tempfile
+    args = [MANAGER, "--report", f"--plugin={_state['plugin']}", f"--title={title}"]
+    if error:
+        fd, path = tempfile.mkstemp(prefix="ap_error_", suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(error)
+        args.append(f"--error={path}")
+    try:
+        subprocess.Popen(args, cwd=ROOT)
+        return True
+    except OSError:
+        return False
+
+
+def error_dialog(title: str, error: str, parent=None):
+    """«Произошла ошибка» + «Отправить разработчику»: окно менеджера, без него — tkinter."""
+    print(error, file=sys.stderr)
+    if not _manager_report(title, error):
+        report_dialog(title, error, parent)
+
+
+def problem_dialog(title: str, parent=None):
+    """«Сообщить о проблеме…» — плагин не упал, но сделал не то."""
+    if not _manager_report(title):
+        report_dialog(title, "", parent)
+
+
 def install_hooks(title: str):
     """Любая непойманная ошибка (в том числе в обработчиках окна) → журнал + окно отчёта."""
     def hook(et, ev, tb):
-        text = "".join(traceback.format_exception(et, ev, tb))
-        print(text, file=sys.stderr)
         try:
-            report_dialog(title, text)
+            error_dialog(title, "".join(traceback.format_exception(et, ev, tb)))
         except Exception:
             pass
 
@@ -357,28 +406,65 @@ def install_hooks(title: str):
         pass
 
 
+def latest_log():
+    """Самый свежий журнал (для «Сообщить о проблеме» без выбранного плагина)."""
+    if not os.path.isdir(LOG_DIR):
+        return None
+    logs = [os.path.join(LOG_DIR, f) for f in os.listdir(LOG_DIR) if f.endswith(".log")]
+    return max(logs, key=os.path.getmtime) if logs else None
+
+
+def _project_from_log(path):
+    """Последний «Проект: …» из журнала — менеджер сам проект не знает."""
+    for line in reversed(_tail(path, 100_000).decode("utf-8", "replace").splitlines()):
+        if line.startswith("Проект: "):
+            return line[8:].strip()
+    return ""
+
+
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--test", action="store_true", help="отправить тестовое сообщение")
-    ap.add_argument("--dialog", action="store_true", help="окно «Отправить журнал»")
-    ap.add_argument("--plugin", default="plugins", help="чей журнал отправлять")
-    ap.add_argument("--inbox", metavar="ПАПКА", help="забрать пересланные боту отчёты в папку")
+    ap.add_argument("--send", action="store_true", help="отправить отчёт (вызывает менеджер)")
+    ap.add_argument("--dialog", action="store_true", help="запасное окно «Отправить журнал» (tkinter)")
+    ap.add_argument("--plugin", default="", help="чей журнал (имя скрипта без .py)")
+    ap.add_argument("--title", default="")
+    ap.add_argument("--error-file")
+    ap.add_argument("--comment-file")
+    ap.add_argument("--inbox", metavar="ПАПКА", help="забрать отчёты Archicad в папку")
+    ap.add_argument("--log-path", action="store_true", help="напечатать путь к журналу плагина")
     a = ap.parse_args(argv)
-    _state["plugin"] = a.plugin
-    if a.inbox:
+
+    if a.plugin:
+        _state["plugin"] = a.plugin
+    else:
+        last = latest_log()
+        if last:
+            _state["plugin"] = os.path.splitext(os.path.basename(last))[0]
+    _state["log"] = log_path()
+    _state["project"] = _project_from_log(_state["log"])
+
+    if a.log_path:
+        print(_state["log"])
+    elif a.inbox:
         got = inbox(a.inbox)
         print("\n".join(got) if got else "Новых отчётов нет.")
     elif a.test:
         print(send("Проверка отправки отчётов", comment="тест"))
+    elif a.send:
+        def read(p):
+            return open(p, encoding="utf-8").read() if p and os.path.isfile(p) else ""
+        error = read(a.error_file)
+        title = a.title or ("ОШИБКА" if error else "Журнал по запросу пользователя")
+        print(send(title, error, read(a.comment_file)))
     else:
-        logs = sorted((os.path.join(LOG_DIR, f) for f in os.listdir(LOG_DIR) if f.endswith(".log")),
-                      key=os.path.getmtime, reverse=True) if os.path.isdir(LOG_DIR) else []
-        if logs and a.plugin == "plugins":            # последний по времени журнал
-            _state["plugin"] = os.path.splitext(os.path.basename(logs[0]))[0]
-        _state["log"] = log_path()
         report_dialog(f"Плагины Archicad  v{plugins_version()}")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"Не отправилось: {e}")
+        sys.exit(1)
