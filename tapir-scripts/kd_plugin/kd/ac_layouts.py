@@ -315,7 +315,11 @@ def publish_pdf(cfg: dict, output_path: str, log=print) -> str:
         else:
             picked.append({"navigatorItemId": it["navigatorItemId"]})
     if not picked:
-        raise ArchicadError(f"В наборе «{name}» нет ни одного из подмножеств {wanted}.")
+        own = acfg.get("subset_name", "КД каркаса (авто)")
+        if own in wanted:
+            raise ArchicadError("Листов КД в проекте ещё нет.\n\n"
+                                "Сначала выберите «Листы в Archicad» или «Пересоздать листы + общий PDF».")
+        raise ArchicadError(f"В наборе публикации «{name}» нет подмножеств: {', '.join(wanted)}.")
 
     tmp = tempfile.mkdtemp(prefix="kd_publish_")
     try:
