@@ -740,6 +740,8 @@ namespace ArchicadPlugins
 
             btnSend.Click += (s, e) => Send();
             bLog.Click += (s, e) => OpenLog();
+            // окно ошибки запускается как главное (Application.Run) — DialogResult его не закрывает
+            bClose.Click += (s, e) => Close();
             Shown += (s, e) => { TopMost = false; Activate(); txtComment.Focus(); };
         }
 
