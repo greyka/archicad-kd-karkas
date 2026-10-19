@@ -74,9 +74,20 @@ def register_tapir(root, uv=None):
     cfg["localFolders"] = folders
     if uv and not cfg.get("uvLocation"):
         cfg["uvLocation"] = uv
-    with open(cfg_path, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=4)
-    notes.append(f"палитра Tapir: папка {path}")
+    # Tapir перечитывает config.json на ходу, и при открытом Archicad это однажды
+    # уронило его (2026-10-19) — поэтому пишем файл, только если что-то меняется.
+    old = None
+    if os.path.isfile(cfg_path):
+        with open(cfg_path, encoding="utf-8-sig") as f:
+            old = json.load(f)
+    if old != cfg:
+        with open(cfg_path, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=4)
+        notes.append(f"палитра Tapir: подключена папка {path}")
+        if archicad_running():
+            notes.append("Archicad открыт — перезапустите его, чтобы палитра Tapir подхватила изменения")
+    else:
+        notes.append(f"палитра Tapir: папка {path} уже подключена — без изменений")
 
     cs = os.path.join(tdir, "custom-scripts")              # копия установщика 1.0
     for old in ("KD_Karkas_PDF.py", "kd_plugin"):
