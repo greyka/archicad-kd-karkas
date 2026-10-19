@@ -108,7 +108,8 @@ Step 3 "Проверяю uv (запуск Python-скриптов из пали�
 function Find-Uv {
     $c = Get-Command uv -ErrorAction SilentlyContinue
     if ($c) { return $c.Source }
-    foreach ($p in @("$env:LOCALAPPDATA\Microsoft\WinGet\Links\uv.exe", "$env:USERPROFILE\.local\bin\uv.exe")) {
+    foreach ($p in @("$env:LOCALAPPDATA\Microsoft\WinGet\Links\uv.exe", "$env:USERPROFILE\.local\bin\uv.exe",
+                     "$env:LOCALAPPDATA\Programs\uv\uv.exe")) {
         if (Test-Path $p) { return $p }
     }
     $w = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter uv.exe -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -123,8 +124,15 @@ if ($uv) {
         Doing "устанавливаю uv через winget"
         winget install --id astral-sh.uv -e --silent --accept-source-agreements --accept-package-agreements | Out-Null
     } else {
-        Doing "устанавливаю uv с astral.sh"
-        powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex" | Out-Null
+        # скачиваем архив, а не выполняем скрипт из интернета — так спокойнее для антивирусов
+        Doing "скачиваю uv с GitHub (astral-sh/uv)"
+        $zip = Join-Path $env:TEMP "uv.zip"
+        $uvDir = Join-Path $env:LOCALAPPDATA "Programs\uv"
+        Invoke-WebRequest "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip" -OutFile $zip -UseBasicParsing
+        New-Item -ItemType Directory -Force $uvDir | Out-Null
+        Expand-Archive $zip -DestinationPath $uvDir -Force
+        $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+        if ($userPath -notlike "*$uvDir*") { [Environment]::SetEnvironmentVariable('Path', "$userPath;$uvDir", 'User') }
     }
     $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
     $uv = Find-Uv
