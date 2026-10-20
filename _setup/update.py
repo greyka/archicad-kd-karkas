@@ -43,7 +43,7 @@ import net  # noqa: E402  HTTPS с запасными путями (как у п
 HERE = os.path.dirname(os.path.abspath(__file__))
 TITLE = "Обновление плагинов Archicad"
 ROOT_FILES = ("VERSION", "CHANGELOG.md", "ПРОЧТИ.txt", "README.md", "Обновить.bat", "Установить.bat",
-              "Удалить.bat", "Менеджер плагинов Archicad.exe")
+              "Удалить.bat", "Менеджер плагинов Archicad.exe", "Инструкция.html")
 PLUGIN_DIRS = ("tapir-scripts",)
 AUTO = QUIET = False
 

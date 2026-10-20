@@ -285,7 +285,15 @@ namespace ArchicadPlugins
                 var plugin = list.SelectedItems.Count > 0 ? Path.GetFileNameWithoutExtension((string)list.SelectedItems[0].Tag) : "";
                 new ReportForm(Root, plugin, null, null).ShowDialog(this);
             };
-            bar.Controls.AddRange(new Control[] { bRun, bOpen, bReg, bBug });
+            var bHelp = new Button { Text = "Инструкция", AutoSize = true };
+            tips.SetToolTip(bHelp, "Что и как работает, что меняет проект и чего не делать");
+            bHelp.Click += (s, e) =>
+            {
+                var help = Path.Combine(Root, "Инструкция.html");
+                if (File.Exists(help)) Process.Start(help);
+                else MessageBox.Show(this, "Нет файла " + help + "\r\nОбновите плагины.", "Инструкция");
+            };
+            bar.Controls.AddRange(new Control[] { bRun, bOpen, bReg, bBug, bHelp });
             tabPlugins.Controls.Add(list);
             tabPlugins.Controls.Add(bar);
             tabPlugins.Controls.Add(head);
