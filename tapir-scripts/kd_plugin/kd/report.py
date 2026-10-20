@@ -29,6 +29,12 @@ import uuid
 
 from .config import ROOT, plugins_version
 
+try:                                    # _setup\net.py: сертификаты Windows + certifi, запасной curl.exe
+    sys.path.insert(0, os.path.join(ROOT, "_setup"))
+    import net as _net
+except Exception:
+    _net = None
+
 LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "ArchicadPlugins", "logs")
 MAX_LOG = 2_000_000                     # байт; больше — старый журнал уходит в .1
 SYSTEM = "Archicad"                     # метка в отчёте: бот общий с плагинами КОМПАС
@@ -126,7 +132,8 @@ def _api(token, method, fields, file=None, timeout=30, field="document"):
         body.write(blob)
         body.write(f"\r\n--{b}--\r\n".encode("utf-8"))
         req = urllib.request.Request(url, body.getvalue(), {"Content-Type": f"multipart/form-data; boundary={b}"})
-    res = json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8"))
+    ctx = _net.context() if _net else None
+    res = json.loads(urllib.request.urlopen(req, timeout=timeout, context=ctx).read().decode("utf-8"))
     if not res.get("ok"):
         raise RuntimeError(res.get("description") or "Telegram: ошибка")
     return res
@@ -169,6 +176,9 @@ def send(title: str, error: str = "", comment: str = "", log: str | None = None)
     blob = _tail(log)
     # одно сообщение «файл + подпись» — его удобно переслать боту целиком (см. inbox)
     full = text.encode("utf-8") + b"\n\n" + ("=" * 60).encode() + b"\n" + blob
+    upd = log_path("Обновление")                # журнал обновлений — хвост к любому отчёту
+    if os.path.normcase(upd) != os.path.normcase(log) and os.path.isfile(upd):
+        full += ("\n\n" + "=" * 20 + " Обновление.log (конец) " + "=" * 20 + "\n").encode("utf-8") + _tail(upd, 20_000)
     caption = text if len(text) <= 1000 else text[:990] + "\n…(полностью — в файле)"
     msg = _api(token, "sendDocument", {"chat_id": chat, "caption": caption},
                (f"ARCHICAD_{_state['plugin']}_{time.strftime('%Y%m%d_%H%M%S')}.log".replace(" ", "_"), full), timeout=60)["result"]
@@ -184,7 +194,10 @@ INDEX_NAME = "reports_index.jsonl"
 
 def _download(token, file_id) -> bytes:
     path = _api(token, "getFile", {"file_id": file_id})["result"]["file_path"]
-    return urllib.request.urlopen(f"https://api.telegram.org/file/bot{token}/{path}", timeout=60).read()
+    url = f"https://api.telegram.org/file/bot{token}/{path}"
+    if _net:
+        return _net.get(url, 60)
+    return urllib.request.urlopen(url, timeout=60).read()
 
 
 def _pinned_index(token, chat):
