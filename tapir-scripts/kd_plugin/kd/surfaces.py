@@ -199,6 +199,65 @@ th{{color:var(--mut);font-weight:600}}td.n{{text-align:right;font-variant-numeri
     return out_html, total, face, missing
 
 
+def write_xlsx(rows, out_xlsx, project="", note=""):
+    """Excel: лист «Сводка» (как таблица HTML, с итогом) и «Элементы» (по одному, как CSV).
+    Числа — числами (м², 3–4 знака), чтобы в Excel можно было считать."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    groups = group_rows(rows)
+    total = math.fsum(r["area"] for r in rows if r["area"] is not None)
+    face = math.fsum(r["face"] for r in rows if r["face"] is not None)
+    bold, head_fill = Font(bold=True), PatternFill("solid", fgColor="E8EEF5")
+
+    def table(ws, top, header, data, num_fmt, widths):
+        for c, h in enumerate(header, 1):
+            cell = ws.cell(top, c, h)
+            cell.font, cell.fill = bold, head_fill
+            cell.alignment = Alignment(wrap_text=True, vertical="center")
+        for r, row in enumerate(data, top + 1):
+            for c, v in enumerate(row, 1):
+                cell = ws.cell(r, c, v)
+                if c in num_fmt:
+                    cell.number_format = num_fmt[c]
+        for c, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(c)].width = w
+        ws.freeze_panes = ws.cell(top + 1, 1)
+        ws.auto_filter.ref = f"A{top}:{get_column_letter(len(header))}{top + len(data)}"
+        return top + len(data)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Сводка"
+    ws["A1"] = "Площади поверхностей"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws["A2"] = " · ".join(x for x in (project, f"{date.today():%d.%m.%Y}", note) if x)
+    ws["A3"], ws["C3"] = "Все поверхности, м²", round(total, 3)
+    ws["A4"], ws["C4"] = "Пласть (наибольшая грань), м²", round(face, 3)
+    ws["A5"], ws["C5"] = "Элементов", len(rows)
+    for a in ("C3", "C4"):
+        ws[a].number_format, ws[a].font = "#,##0.00", bold
+    data = [[g["layer"], g["name"], g["size"], g["count"], g["one"], g["face"], g["area"], g["method"]]
+            for g in groups]
+    last = table(ws, 7, ["Слой", "Элемент", "Размер, мм", "Кол-во", "1 шт, м²", "Пласть, м²", "Все пов-ти, м²", "Способ"],
+                 data, {5: "0.0000", 6: "0.000", 7: "0.000"}, [30, 30, 16, 9, 11, 12, 14, 34])
+    t = last + 1
+    ws.cell(t, 1, "Итого").font = bold
+    ws.cell(t, 4, len(rows)).font = bold
+    for c, v in ((6, face), (7, total)):
+        cell = ws.cell(t, c, round(v, 3))
+        cell.font, cell.number_format = bold, "0.000"
+
+    ws2 = wb.create_sheet("Элементы")
+    data = [[r["layer"], r["type"], r["libpart"], r["id"], r["size"], r["face"], r["area"], r["method"], r["guid"]]
+            for r in sorted(rows, key=lambda r: (r["layer"], r["libpart"], r["size"]))]
+    table(ws2, 1, ["Слой", "Тип", "Библ. элемент", "ID", "Размер, мм", "Пласть, м²", "Все пов-ти, м²", "Способ", "GUID"],
+          data, {6: "0.0000", 7: "0.0000"}, [30, 12, 24, 12, 16, 12, 14, 34, 38])
+    wb.save(out_xlsx)
+    return out_xlsx
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="kd.surfaces", description="Площадь всех поверхностей элементов")
     ap.add_argument("--selected", action="store_true")
@@ -211,7 +270,14 @@ def main(argv=None):
     cfg = load_config().get("archicad", {})
     rows = collect(a.selected, a.layer, a.min_width, a.t, a.port or cfg.get("port"),
                    cfg.get("object_libparts"))
-    path, total, face, missing = write_report(rows, os.path.abspath(a.output))
+    out = os.path.abspath(a.output)
+    if out.lower().endswith(".xlsx"):
+        path = write_xlsx(rows, out)
+        total = math.fsum(r["area"] for r in rows if r["area"] is not None)
+        face = math.fsum(r["face"] for r in rows if r["face"] is not None)
+        missing = sum(1 for r in rows if r["area"] is None)
+    else:
+        path, total, face, missing = write_report(rows, out)
     print(f"Готово: {path}\nЭлементов {len(rows)}, все поверхности {total:.3f} м², пласть {face:.3f} м²"
           + (f", без площади {missing}" if missing else ""))
     return path
